@@ -1,0 +1,24 @@
+{
+  "name": "ipfs-storage-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "node src/app.js",
+    "start": "node src/app.js",
+    "relayer": "node relayer.js",
+    "relayer:dev": "nodemon relayer.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.8.0",
+    "express": "^4.19.2",
+    "ipfs-http-client": "^60.0.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemon": "^3.0.1",
+    "pg": "^8.11.3"
+  }
+} 

@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/* Glassmorphism utility */
+.glass {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Ensure content sits above fixed background */
+.app-shell {
+  position: relative;
+}
+.app-content {
+  position: relative;
+  z-index: 10;
+}
+
+/* Make body transparent to reveal background */
+html, body, #root {
+  height: 100%;
+}
+body {
+  background: #000;
+}
+
+*{
+  scrollbar-width: none;
+}
