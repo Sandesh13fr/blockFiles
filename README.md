@@ -179,6 +179,8 @@ PGDATABASE=blockfiles
 
 # Frontend Configuration
 FRONTEND_ORIGIN=http://localhost:5173
+VITE_API_BASE_PATH=/api
+VITE_CONTRACT_ADDRESS=0xYourDeployedContractAddress
 
 # Smart Contract
 CONTRACT_ADDRESS=0xYourDeployedContractAddress

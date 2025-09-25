@@ -2,7 +2,6 @@ import express from "express";
 import { ethers } from "ethers";
 import dotenv from "dotenv";
 
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
 
@@ -16,11 +15,13 @@ const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load contract ABI and address
+// Load contract ABI and address (use minimal ABI to avoid missing artifacts at runtime)
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-const CONTRACT_ABI = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "../../artifacts/contracts/FileOwnershipRegistry.sol/FileOwnershipRegistry.json"), "utf8")
-).abi;
+const CONTRACT_ABI = [
+  "function executeMetaTransaction(address userAddress, bytes functionSignature, bytes32 sigR, bytes32 sigS, uint8 sigV) returns (bytes)",
+  "function getNonce(address user) view returns (uint256)",
+  "function getMessageHash(bytes _data) view returns (bytes32)"
+];
 
 // Relayer wallet setup
 const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);

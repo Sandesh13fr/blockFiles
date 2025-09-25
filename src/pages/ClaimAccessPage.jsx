@@ -23,7 +23,7 @@ const ClaimAccessPage = () => {
       try {
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
-        const contractAddress = process.env.REACT_APP_CONTRACT_ADDRESS;
+  const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS;
 
         if (!contractAddress) {
           setError('Contract address not configured');

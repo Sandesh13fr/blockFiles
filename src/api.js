@@ -3,7 +3,7 @@ export async function deleteFile(cid) {
   if (!res.ok) throw new Error('Delete failed');
   return res.json();
 }
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE_PATH || '/api';
 
 export async function health() {
   const res = await fetch(`${API_BASE}/health`);
@@ -34,4 +34,14 @@ export async function downloadByCid(cid) {
 
 export function ipfsGatewayUrl(cid) {
   return `https://ipfs.io/ipfs/${cid}`;
-} 
+}
+
+export async function gaslessTransfer({ cid, newOwner, owner, deadline, signature }) {
+  const res = await fetch(`${API_BASE}/gasless-transfer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cid, newOwner, owner, deadline, signature })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

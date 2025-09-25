@@ -1,25 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
-import useMetaMask from '../hooks/useMetaMask'
-import { listFiles, uploadFile, downloadByCid, ipfsGatewayUrl, health, deleteFile } from '../api'
-import { sendMetaTx } from '../utils/sendMetaTx'
+import { useRef, useState, useEffect } from 'react'
 import { ethers } from 'ethers'
+import useMetaMask from '../hooks/useMetaMask'
+import { getRegistryContract } from '../fileRegistry'
+import { listFiles, uploadFile, downloadByCid, ipfsGatewayUrl, health, deleteFile } from '../api'
 import ShareModal from '../components/ShareModal'
 import TransferOwnershipModal from '../components/TransferOwnershipModal'
 
 export default function UploadPage() {
-  const { account, isMetaMask, connect } = useMetaMask();
+  const { account, ensureConnected, getProvider, connect } = useMetaMask()
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [ok, setOk] = useState(false)
   const [registering, setRegistering] = useState(false)
-  const [contract, setContract] = useState(null)
-  const [signer, setSigner] = useState(null)
-  const [shareModalOpen, setShareModalOpen] = useState(false)
-  const [transferModalOpen, setTransferModalOpen] = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
   const [successMessage, setSuccessMessage] = useState('')
+  const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [transferModalOpen, setTransferModalOpen] = useState(false)
+  const [txHash, setTxHash] = useState('')
   const inputRef = useRef(null)
+  const contractRef = useRef(null)
+
+  const initializeContract = async () => {
+    if (contractRef.current) return contractRef.current
+    const provider = getProvider()
+    if (!provider) throw new Error('MetaMask not found')
+    const signer = await provider.getSigner()
+    contractRef.current = getRegistryContract(signer)
+    return contractRef.current
+  }
 
   async function onDelete(cid) {
     setLoading(true);
@@ -52,49 +61,6 @@ export default function UploadPage() {
     refresh()
   }, [])
 
-  useEffect(() => {
-    if (account && window.ethereum) {
-      initializeContract()
-    }
-  }, [account])
-
-  const initializeContract = async () => {
-    try {
-      const provider = new ethers.BrowserProvider(window.ethereum)
-      const signer = await provider.getSigner()
-      const contractAddress = process.env.REACT_APP_CONTRACT_ADDRESS
-
-      if (!contractAddress) {
-        console.warn('Contract address not configured')
-        return
-      }
-
-      const contractABI = [
-        "function registerFile(string cid) external",
-        "function transferOwnership(string cid, address newOwner) external",
-        "function grantAccess(string cid, address user, bool canWrite, uint256 expiryTime) external",
-        "function revokeAccess(string cid, address user) external",
-        "function createSharedAccess(string cid, bool canWrite, uint256 expiryTime) external returns (bytes32)",
-        "function claimSharedAccess(bytes32 linkId, string cid) external",
-        "function hasAccess(string cid, address user) external view returns (bool)",
-        "function hasWriteAccess(string cid, address user) external view returns (bool)",
-        "function getOwner(string cid) external view returns (address)",
-        "function getAccessPermission(string cid, address user) external view returns (bool hasAccess, bool canWrite, uint256 expiryTime, address grantedBy)",
-        "function getSharedAccess(string cid, bytes32 linkId) external view returns (address owner, bool canWrite, uint256 expiryTime, bool isActive)",
-        "event FileRegistered(string cid, address indexed owner)",
-        "event OwnershipTransferred(string cid, address indexed previousOwner, address indexed newOwner)",
-        "event AccessGranted(string cid, address indexed user, bool canWrite, uint256 expiryTime)",
-        "event AccessRevoked(string cid, address indexed user)"
-      ]
-
-      const contract = new ethers.Contract(contractAddress, contractABI, signer)
-      setContract(contract)
-      setSigner(signer)
-    } catch (error) {
-      console.error('Error initializing contract:', error)
-    }
-  }
-
   const handleShare = async (file) => {
     const url = ipfsGatewayUrl(file.cid)
     try {
@@ -126,57 +92,72 @@ export default function UploadPage() {
   }
 
   function onPickClick() {
+    if (!account) {
+      setError('Connect your wallet before uploading.');
+      return;
+    }
     inputRef.current?.click()
   }
 
   async function handleFiles(selected) {
-    if (!selected || selected.length === 0) return;
-    setLoading(true);
-    setError('');
+    setError('')
+    setSuccessMessage('')
+    setTxHash('')
     try {
+      // Ensure wallet is connected and on correct chain
+      await ensureConnected()
+      const contract = await initializeContract()
+      if (!selected || selected.length === 0) return;
+      setLoading(true);
       for (const file of selected) {
+        // 1) Upload to IPFS/backend
         const res = await uploadFile(file);
-        setRegistering(true);
-        if (window.ethereum && res.cid && account) {
-          const provider = new ethers.BrowserProvider(window.ethereum);
-          // Use the same ABI as in initializeContract
-          const contractABI = [
-            "function registerFile(string cid) external",
-            "function transferOwnership(string cid, address newOwner) external",
-            "function grantAccess(string cid, address user, bool canWrite, uint256 expiryTime) external",
-            "function revokeAccess(string cid, address user) external",
-            "function createSharedAccess(string cid, bool canWrite, uint256 expiryTime) external returns (bytes32)",
-            "function claimSharedAccess(bytes32 linkId, string cid) external",
-            "function hasAccess(string cid, address user) external view returns (bool)",
-            "function hasWriteAccess(string cid, address user) external view returns (bool)",
-            "function getOwner(string cid) external view returns (address)",
-            "function getAccessPermission(string cid, address user) external view returns (bool hasAccess, bool canWrite, uint256 expiryTime, address grantedBy)",
-            "function getSharedAccess(string cid, bytes32 linkId) external view returns (address owner, bool canWrite, uint256 expiryTime, bool isActive)",
-            "function getNonce(address user) external view returns (uint256)",
-            "function executeMetaTransaction(address userAddress, bytes functionSignature, bytes32 sigR, bytes32 sigS, uint8 sigV) external returns (bytes)",
-            "event FileRegistered(string cid, address indexed owner)",
-            "event OwnershipTransferred(string cid, address indexed previousOwner, address indexed newOwner)",
-            "event AccessGranted(string cid, address indexed user, bool canWrite, uint256 expiryTime)",
-            "event AccessRevoked(string cid, address indexed user)"
-          ];
-          const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS
-const apiBaseUrl = import.meta.env.VITE_API_BASE_PATH || "/api"
-          await sendMetaTx({
-            functionName: "registerFile",
-            functionArgs: [res.cid],
-            contractAddress,
-            abi: contractABI,
-            provider,
-            userAddress: account,
-            apiBaseUrl
-          });
+        if (!res?.cid) {
+          throw new Error('Upload failed: missing CID');
         }
-        setRegistering(false);
+
+        // 2) Register on-chain; user pays gas via MetaMask
+        setRegistering(true);
+        try {
+          // Estimate gas and set overrides for broad EVM compatibility
+          // Get required registration fee
+          let feeValue = 0n
+          try {
+            const fee = await contract.registerFee()
+            feeValue = fee
+          } catch {}
+          const gasEstimate = await contract.estimateGas.registerFile(res.cid, { value: feeValue })
+          const gasLimit = (gasEstimate * 120n) / 100n // +20% buffer
+          const provider = getProvider()
+          const feeData = await provider.getFeeData()
+          const overrides = { gasLimit }
+          if (feeValue > 0n) overrides.value = feeValue
+          if (feeData.gasPrice) {
+            overrides.gasPrice = feeData.gasPrice
+          } else {
+            const defaultPriority = 1n * 10n ** 9n // 1 gwei
+            const defaultMax = 30n * 10n ** 9n // 30 gwei
+            overrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || defaultPriority
+            overrides.maxFeePerGas = feeData.maxFeePerGas || defaultMax
+          }
+
+          const tx = await contract.registerFile(res.cid, overrides)
+          setTxHash(tx.hash)
+          await tx.wait()
+          setSuccessMessage(`On-chain registered: ${res.cid}`)
+          setTimeout(() => setSuccessMessage(''), 4000)
+        } catch (txErr) {
+          // 3) Roll back server record on failure
+          try { await deleteFile(res.cid) } catch {}
+          throw txErr
+        } finally {
+          setRegistering(false)
+        }
       }
       await refresh();
     } catch (e) {
+      setRegistering(false)
       setError(e.message);
-      setRegistering(false);
     } finally {
       setLoading(false);
     }
@@ -185,6 +166,10 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_PATH || "/api"
   function onDrop(e) {
     e.preventDefault()
     e.stopPropagation()
+    if (!account) {
+      setError('Connect your wallet before uploading.');
+      return;
+    }
     const dt = e.dataTransfer
     if (dt?.files && dt.files.length > 0) {
       handleFiles(dt.files)
@@ -260,7 +245,12 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_PATH || "/api"
         <div className="mt-4 p-3 glass text-red-200 rounded border border-red-300/40">{error}</div>
       )}
       {registering && (
-        <div className="mt-4 p-3 glass text-yellow-200 rounded border border-yellow-300/40">Registering file on-chain...</div>
+        <div className="mt-4 p-3 glass text-yellow-200 rounded border border-yellow-300/40">
+          Registering file on-chain...
+          {txHash && (
+            <div className="text-xs mt-1 opacity-80 break-all">Pending tx: {txHash}</div>
+          )}
+        </div>
       )}
       {successMessage && (
         <div className="mt-4 p-3 glass text-green-200 rounded border border-green-300/40">{successMessage}</div>
@@ -331,8 +321,8 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_PATH || "/api"
                       <button
                         className="px-3 py-1.5 rounded bg-purple-600/80 text-white text-sm hover:bg-purple-600"
                         onClick={() => handleTransfer(f)}
-                        disabled={!contract}
-                        title={!contract ? 'Connect wallet to transfer' : 'Transfer ownership'}
+                        disabled={!contractRef.current}
+                        title={!contractRef.current ? 'Connect wallet to transfer' : 'Transfer ownership'}
                       >
                         Transfer
                       </button>
@@ -357,8 +347,7 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_PATH || "/api"
         isOpen={shareModalOpen}
         onClose={() => setShareModalOpen(false)}
         file={selectedFile}
-        contract={contract}
-        signer={signer}
+        contract={contractRef.current}
         onShareSuccess={handleShareSuccess}
       />
 
@@ -366,8 +355,7 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_PATH || "/api"
         isOpen={transferModalOpen}
         onClose={() => setTransferModalOpen(false)}
         file={selectedFile}
-        contract={contract}
-        signer={signer}
+        contract={contractRef.current}
         onTransferSuccess={handleTransferSuccess}
       />
     </div>
