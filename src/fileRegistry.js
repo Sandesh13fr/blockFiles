@@ -1,25 +1,24 @@
 // Ethers.js integration for FileOwnershipRegistry
 // Place this in your src directory as fileRegistry.js
-import { ethers } from 'ethers';
+import { ethers } from 'ethers'
 
-// Replace with your deployed contract address
-const CONTRACT_ADDRESS = '0x7EF2e0048f5bAeDe046f6BF797943daF4ED8CB47';
-
-// ABI for FileOwnershipRegistry
+// Use a minimal ABI to avoid JSON import issues
 const ABI = [
-  "function registerFile(string cid) external",
-  "function getOwner(string cid) external view returns (address)",
-  "event FileRegistered(string cid, address indexed owner)"
-];
+  'function registerFile(string cid)',
+  'function registerFee() view returns (uint256)',
+  'function getOwner(string cid) view returns (address)',
+  'function grantAccess(string cid, address user, bool canWrite, uint256 expiryTime)',
+  'function createSharedAccess(string cid, bool canWrite, uint256 expiryTime) returns (bytes32)',
+  'function transferOwnership(string cid, address newOwner)',
+  'function metaTransferOwnership(string cid,address newOwner,address fileOwner,uint256 deadline,bytes signature)',
+  'function getNonce(address user) view returns (uint256)',
+  'function nonces(address user) view returns (uint256)'
+]
 
-export async function registerFileOnChain(cid, signer) {
-  const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-  const tx = await contract.registerFile(cid);
-  await tx.wait();
-  return tx;
-}
+export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS
 
-export async function getFileOwner(cid, provider) {
-  const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
-  return contract.getOwner(cid);
+export function getRegistryContract(signerOrProvider) {
+  if (!CONTRACT_ADDRESS) throw new Error('VITE_CONTRACT_ADDRESS is missing')
+  if (!signerOrProvider) throw new Error('Signer or provider is required')
+  return new ethers.Contract(CONTRACT_ADDRESS, ABI, signerOrProvider)
 }

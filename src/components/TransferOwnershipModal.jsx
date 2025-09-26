@@ -1,116 +1,117 @@
-import { useState } from 'react';
-import { ethers } from 'ethers';
+import { useState } from 'react'
+import useMetaMask from '../hooks/useMetaMask'
+import { ethers } from 'ethers'
 
-const TransferOwnershipModal = ({ isOpen, onClose, file, contract, signer, onTransferSuccess }) => {
-  const [newOwnerAddress, setNewOwnerAddress] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [confirmText, setConfirmText] = useState('');
+const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS
 
-  const handleTransfer = async () => {
-    if (!newOwnerAddress || !ethers.isAddress(newOwnerAddress)) {
-      setError('Please enter a valid Ethereum address');
-      return;
-    }
+export default function TransferOwnershipModal({ isOpen, onClose, file, onTransferSuccess, contract }) {
+  const { account, getProvider, ensureConnected } = useMetaMask()
+  const [newOwner, setNewOwner] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [txHash, setTxHash] = useState('')
 
-    if (confirmText !== 'TRANSFER') {
-      setError('Please type "TRANSFER" to confirm');
-      return;
-    }
+  if (!isOpen) return null
 
-    setIsLoading(true);
-    setError('');
+  const reset = () => {
+    setNewOwner('')
+    setError('')
+    setTxHash('')
+  }
 
+  async function onSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setTxHash('')
     try {
-      const tx = await contract.transferOwnership(file.cid, newOwnerAddress);
-      await tx.wait();
+      if (!file) throw new Error('No file selected')
+      if (!ethers.isAddress(newOwner)) throw new Error('Invalid address')
+      await ensureConnected()
+      const provider = getProvider()
+      const signer = await provider.getSigner()
+      const network = await provider.getNetwork()
+      const chainId = Number(network.chainId)
+      const owner = account
+      const deadline = Math.floor(Date.now() / 1000) + 600 // 10 minutes
+      if (!contract) throw new Error('Contract not ready')
+      // real nonce from contract
+      const nonce = await contract.getNonce(owner)
+      const domain = {
+        name: 'FileOwnershipRegistry',
+        version: '1',
+        chainId,
+        verifyingContract: CONTRACT_ADDRESS
+      }
+      const types = {
+        MetaTransfer: [
+          { name: 'cid', type: 'string' },
+          { name: 'newOwner', type: 'address' },
+          { name: 'owner', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' }
+        ]
+      }
+      const message = {
+        cid: file.cid,
+        newOwner,
+        owner,
+        nonce: Number(nonce),
+        deadline
+      }
+      const signature = await signer.provider.send('eth_signTypedData_v4', [owner, JSON.stringify({ domain, types: { EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' }
+      ], ...types }, primaryType: 'MetaTransfer', message })])
 
-      onTransferSuccess(`Ownership transferred to ${newOwnerAddress}`);
-      setNewOwnerAddress('');
-      setConfirmText('');
-      onClose();
-    } catch (error) {
-      console.error('Error transferring ownership:', error);
-      setError('Failed to transfer ownership. Please try again.');
+      setLoading(true)
+      // Call backend gasless endpoint
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_PATH || '/api'}/gasless-transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cid: file.cid, newOwner, owner, deadline, signature })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Gasless transfer failed')
+      setTxHash(data.txHash)
+      onTransferSuccess?.('Ownership transfer submitted (gasless)')
+      reset()
+      onClose()
+    } catch (err) {
+      console.error(err)
+      setError(err.message || 'Transfer failed')
     } finally {
-      setIsLoading(false);
+      setLoading(false)
     }
-  };
-
-  if (!isOpen) return null;
+  }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-red-600">Transfer Ownership</h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="mb-4">
-          <p className="text-sm text-gray-600 mb-2">File: {file.name || file.cid}</p>
-          <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-            <p className="text-sm text-yellow-800">
-              ⚠️ <strong>Warning:</strong> This action cannot be undone. You will permanently lose ownership of this file.
-            </p>
-          </div>
-        </div>
-
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            New Owner Address
-          </label>
-          <input
-            type="text"
-            value={newOwnerAddress}
-            onChange={(e) => setNewOwnerAddress(e.target.value)}
-            placeholder="0x..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-          />
-        </div>
-
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Type "TRANSFER" to confirm
-          </label>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            placeholder="TRANSFER"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-          />
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-            {error}
-          </div>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div className="bg-gray-900/90 border border-white/20 rounded-lg p-6 w-full max-w-md text-white">
+        <h2 className="text-lg font-semibold mb-4">Transfer Ownership (Gasless)</h2>
+        {file && (
+          <p className="text-xs mb-3 break-all text-slate-300">CID: {file.cid}</p>
         )}
-
-        <div className="flex justify-end space-x-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleTransfer}
-            disabled={isLoading || !newOwnerAddress || confirmText !== 'TRANSFER'}
-            className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? 'Transferring...' : 'Transfer Ownership'}
-          </button>
-        </div>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs mb-1">New Owner Address</label>
+            <input
+              className="w-full px-3 py-2 rounded bg-black/40 border border-white/20 text-sm outline-none focus:border-white/50"
+              placeholder="0x..."
+              value={newOwner}
+              onChange={(e) => setNewOwner(e.target.value.trim())}
+              disabled={loading}
+            />
+          </div>
+          {error && <div className="text-red-300 text-xs bg-red-900/30 border border-red-600/40 p-2 rounded">{error}</div>}
+          {txHash && <div className="text-green-300 text-xs break-all">Tx: {txHash}</div>}
+          <div className="flex gap-3 justify-end pt-2">
+            <button type="button" onClick={() => { reset(); onClose(); }} className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm" disabled={loading}>Cancel</button>
+            <button type="submit" disabled={loading || !newOwner} className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-500 text-sm disabled:opacity-50">{loading ? 'Submitting...' : 'Transfer (Gasless)'}</button>
+          </div>
+        </form>
       </div>
     </div>
-  );
-};
-
-export default TransferOwnershipModal;
+  )
+}

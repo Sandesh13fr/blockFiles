@@ -14,7 +14,7 @@ import { encodeMetaTx, signMetaTx } from "../utils/metaTxHelpers";
  */
 export async function prepareMetaTx({ functionName, functionArgs, contractAddress, abi, provider, userAddress }) {
   // Get signer
-  const signer = provider.getSigner();
+  const signer = await provider.getSigner();
   // 1. Encode meta-tx and get message hash
   const { functionSignature, messageHash } = await encodeMetaTx(
     functionName,
