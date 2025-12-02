@@ -1,6 +1,6 @@
 # blockFiles - Decentralized File Storage
 
-A modern, decentralized file storage application built with React, IPFS, Ethereum, and gasless transactions. Store, share, and manage files securely with blockchain-verified ownership.
+A modern, decentralized file storage application built with React, IPFS, Ethereum, and a local Hardhat dev chain. Store, share, and manage files securely with blockchain-verified ownership.
 
 ## ✨ Features
 
@@ -10,20 +10,18 @@ A modern, decentralized file storage application built with React, IPFS, Ethereu
 - **MetaMask Integration**: Seamless Web3 wallet connection
 - **Secure File Management**: Upload, download, and delete files with ownership verification
 
-### 🚀 New Features: Ownership Transfer & Gasless Transactions
-
-#### Ownership Transfer & Sharing
+### 🚀 Ownership Transfer & Sharing
 - **Transfer Ownership**: Permanently transfer file ownership to another wallet
 - **Grant Access**: Share read-only or read-write access to specific addresses
 - **Time-Limited Access**: Set expiration times for shared access
 - **Shared Access Links**: Create one-time use links for file access
 - **Access Management**: View and revoke granted permissions
 
-#### Gasless Transactions (MetaTx)
-- **Zero Gas Fees**: Users don't need ETH to interact with the contract
-- **Relayer Service**: Backend service that pays for transaction fees
-- **Meta-Transactions**: Signed transactions relayed through trusted service
-- **Rate Limiting**: Prevents abuse of the relayer service
+### ⚡ Local Dev Chain with Free ETH
+- **Hardhat Node**: Local Ethereum network with pre-funded demo accounts
+- **Direct MetaMask Transactions**: Users sign and send transactions themselves
+- **Predictable Costs**: Gas fees are paid with the free ETH supplied by Hardhat
+- **Lean Architecture**: No additional relayer services to run or secure
 
 ## 🏗️ Architecture
 
@@ -33,7 +31,7 @@ A modern, decentralized file storage application built with React, IPFS, Ethereu
 │                 │    │                 │    │                 │
 │ - File Upload   │◄──►│ - API Endpoints │◄──►│ - Content Storage│
 │ - MetaMask      │    │ - PostgreSQL DB │    │ - CID Generation│
-│ - Sharing UI    │    │ - Relayer Service│    │                 │
+│ - Sharing UI    │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
@@ -75,7 +73,7 @@ cd ..
 cp .env.example .env
 
 # Update .env with your configuration
-# Add your contract address, relayer private key, etc.
+# Add your contract address, RPC URL, etc.
 ```
 
 ### 3. Database Setup
@@ -111,13 +109,10 @@ chmod +x deploy.sh
 # Terminal 1: Start Hardhat node
 npx hardhat node
 
-# Terminal 2: Start relayer
-cd server && npm run relayer
-
-# Terminal 3: Start backend
+# Terminal 2: Start backend API
 cd server && npm start
 
-# Terminal 4: Start frontend
+# Terminal 3: Start frontend
 npm run dev
 ```
 
@@ -153,11 +148,11 @@ npm run dev
    - Type "TRANSFER" to confirm
    - Ownership is permanently transferred
 
-### Gasless Transactions
-- All contract interactions are automatically gasless
-- Users don't need ETH in their wallets
-- Transactions are signed and relayed through the backend service
-- Rate limiting prevents abuse
+### Local Development Chain
+- Transactions are submitted directly from MetaMask to the Hardhat node
+- Hardhat provides 20 accounts preloaded with 10,000 test ETH each
+- Import any of those private keys into MetaMask for free test funds
+- Gas costs are predictable and free thanks to Hardhat's faucet
 
 ## 🔧 Configuration
 
@@ -182,13 +177,10 @@ FRONTEND_ORIGIN=http://localhost:5173
 VITE_API_BASE_PATH=/api
 VITE_CONTRACT_ADDRESS=0xYourDeployedContractAddress
 
-# Smart Contract
-CONTRACT_ADDRESS=0xYourDeployedContractAddress
-
-# Relayer Configuration
-RELAYER_PRIVATE_KEY=your_relayer_private_key_here
+# Smart Contract / Chain
 RPC_URL=http://127.0.0.1:8545
-RELAYER_PORT=3001
+CONTRACT_ADDRESS=0xYourDeployedContractAddress
+SERVER_PRIVATE_KEY=hardhat_account_private_key # optional, used for registry reads
 ```
 
 ## 🛠️ Development
@@ -199,7 +191,6 @@ blockFiles/
 ├── contracts/              # Solidity smart contracts
 ├── scripts/               # Deployment scripts
 ├── server/                # Express.js backend
-│   ├── relayer.js        # Gasless transaction relayer
 │   └── src/              # Backend source code
 ├── src/                  # React frontend
 │   ├── components/       # Reusable UI components
@@ -222,10 +213,6 @@ cd server
 npm start           # Start production server
 npm run dev         # Start development server with nodemon
 
-# Relayer
-npm run relayer     # Start relayer service
-npm run relayer:dev # Start relayer with auto-reload
-
 # Smart Contracts
 npx hardhat compile    # Compile contracts
 npx hardhat test       # Run tests
@@ -237,9 +224,8 @@ npx hardhat run scripts/deploy.js --network localhost
 
 - **Access Control**: Granular permissions for file access
 - **Time-Limited Access**: Automatic expiration of shared access
-- **Rate Limiting**: Prevents relayer abuse
-- **Signature Verification**: Meta-transaction signature validation
-- **Nonce Management**: Prevents replay attacks
+- **Signature Verification**: Typed data and contract checks secure shared access workflows
+- **Nonce Management**: Prevents replay attacks for share links and authorization flows
 
 ## 🤝 Contributing
 

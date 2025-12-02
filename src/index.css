@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+*::selection{
+  background-color: #fde047;
+  color: #212121;
+}
 /* Glassmorphism utility */
 .glass {
   background: rgba(255, 255, 255, 0.14);
@@ -12,10 +16,22 @@
 /* Ensure content sits above fixed background */
 .app-shell {
   position: relative;
+  isolation: isolate;
 }
 .app-content {
   position: relative;
   z-index: 10;
+}
+
+.app-background {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+  margin-bottom: 30px;
 }
 
 /* Make body transparent to reveal background */
@@ -28,4 +44,75 @@ body {
 
 *{
   scrollbar-width: none;
+}
+
+/* Upload action buttons */
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.35);
+  transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.action-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.35), transparent 60%);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
+.action-button:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.01);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.45);
+}
+
+.action-button:hover:not(:disabled)::after {
+  opacity: 1;
+}
+
+.action-button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.45);
+  outline-offset: 2px;
+}
+
+.action-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.action-button[data-variant="refresh"] {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(51, 65, 85, 0.9));
+}
+
+.action-button[data-variant="download"] {
+  background: linear-gradient(135deg, #60a5fa, #7c3aed);
+}
+
+.action-button[data-variant="share"] {
+  background: linear-gradient(135deg, #34d399, #10b981);
+}
+
+.action-button[data-variant="transfer"] {
+  background: linear-gradient(135deg, #c084fc, #a855f7);
+}
+
+.action-button[data-variant="delete"] {
+  background: linear-gradient(135deg, #f87171, #ef4444);
 }

@@ -32,16 +32,35 @@ export async function downloadByCid(cid) {
   return blob;
 }
 
+export async function docChat(message, history = [], options = {}) {
+  const payload = {
+    message,
+    history,
+    refresh: options.refresh ?? false
+  }
+  const res = await fetch(`${API_BASE}/chat/docbot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || 'Doc chatbot request failed')
+  }
+  return data
+}
+
+export async function refreshDocChatIndex() {
+  const res = await fetch(`${API_BASE}/chat/docbot/reindex`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to rebuild doc index')
+  }
+  return data
+}
+
 export function ipfsGatewayUrl(cid) {
   return `https://ipfs.io/ipfs/${cid}`;
 }
 
-export async function gaslessTransfer({ cid, newOwner, owner, deadline, signature }) {
-  const res = await fetch(`${API_BASE}/gasless-transfer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cid, newOwner, owner, deadline, signature })
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
+// All contract interactions are now expected to be performed directly from the wallet-connected frontend.

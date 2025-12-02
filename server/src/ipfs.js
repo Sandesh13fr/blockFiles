@@ -1,44 +1,62 @@
 import axios from 'axios';
-/**
- * Unpins a file from Pinata Cloud
- * @param {string} cid - The CID to unpin
- * @returns {Promise<object>} Pinata unpin response
- */
-export async function unpinFileFromPinata(cid) {
-  const pinata = getIpfsClient();
-  // Try pinata.pin.delete (Pinata SDK v2+)
-  if (pinata.pin && typeof pinata.pin.delete === 'function') {
-    return await pinata.pin.delete(cid);
-  }
-  // Try pinata.unpin (Pinata SDK v1)
-  if (typeof pinata.unpin === 'function') {
-    return await pinata.unpin(cid);
-  }
-  // Fallback: Use Pinata REST API directly
-  const jwt = process.env.PINATA_JWT;
-  if (!jwt) throw new Error('PINATA_JWT not set in environment.');
-  try {
-    const url = `https://api.pinata.cloud/pinning/unpin/${cid}`;
-    const resp = await axios.delete(url, {
-      headers: { Authorization: `Bearer ${jwt}` }
-    });
-    return resp.data;
-  } catch (err) {
-    throw new Error('Pinata REST API unpin failed: ' + (err.response?.data?.error || err.message));
-  }
-}
 import { PinataSDK } from 'pinata';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
+const envCandidates = [
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../.env'),
+  path.resolve(process.cwd(), '.env')
+];
+
+for (const envPath of envCandidates) {
+  dotenv.config({ path: envPath, override: false });
+}
+
+
+const PINATA_JWT = process.env.PINATA_JWT;
+const PINATA_GATEWAY = process.env.PINATA_GATEWAY;
+
+if (!PINATA_JWT) {
+  throw new Error(
+    "PINATA_JWT is not set. Add your Pinata JWT token to the project-level .env file so uploads can authenticate."
+  );
+}
 
 const pinata = new PinataSDK({
-  pinataJwt: process.env.PINATA_JWT,
-  pinataGateway: process.env.PINATA_GATEWAY
+  pinataJwt: PINATA_JWT,
+  pinataGateway: PINATA_GATEWAY
 });
+
+/**
+ * Unpins a file from Pinata Cloud. Tries SDK helpers first, then REST fallback.
+ */
+export async function unpinFileFromPinata(cid) {
+  if (!cid) throw new Error('CID is required to unpin from Pinata');
+  const client = await getIpfsClient();
+
+  if (client.pin && typeof client.pin.delete === 'function') {
+    return client.pin.delete(cid);
+  }
+  if (typeof client.unpin === 'function') {
+    return client.unpin(cid);
+  }
+
+  try {
+    const resp = await axios.delete(`https://api.pinata.cloud/pinning/unpin/${cid}`, {
+      headers: { Authorization: `Bearer ${PINATA_JWT}` }
+    });
+    return resp.data;
+  } catch (err) {
+    const detail = err.response?.data?.error || err.message;
+    throw new Error(`Pinata REST API unpin failed: ${detail}`);
+  }
+}
 
 // Log Pinata SDK version at startup for diagnostics (after pinata is defined)
 try {

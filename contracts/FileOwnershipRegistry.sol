@@ -176,6 +176,14 @@ contract FileOwnershipRegistry {
         return grantedUsers[cid].values();
     }
 
+    function getOwner(string calldata cid) external view returns (address) {
+        return fileOwners[cid];
+    }
+
+    function getNonce(address user) external view returns (uint256) {
+        return nonces[user];
+    }
+
     // ========== Withdraw ==========
 
     function withdraw(address payable to) external {

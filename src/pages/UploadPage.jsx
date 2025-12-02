@@ -1,7 +1,7 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
 import useMetaMask from '../hooks/useMetaMask'
-import { getRegistryContract } from '../fileRegistry'
+import { getRegistryContract, CONTRACT_ADDRESS } from '../fileRegistry'
 import { listFiles, uploadFile, downloadByCid, ipfsGatewayUrl, health, deleteFile } from '../api'
 import ShareModal from '../components/ShareModal'
 import TransferOwnershipModal from '../components/TransferOwnershipModal'
@@ -20,13 +20,27 @@ export default function UploadPage() {
   const [txHash, setTxHash] = useState('')
   const inputRef = useRef(null)
   const contractRef = useRef(null)
+  const filesCacheRef = useRef({ data: [], timestamp: 0 })
+  const CACHE_WINDOW_MS = 15_000
+
+  const ensureRegistryContract = async () => {
+    await ensureConnected()
+    return initializeContract()
+  }
 
   const initializeContract = async () => {
-    if (contractRef.current) return contractRef.current
     const provider = getProvider()
     if (!provider) throw new Error('MetaMask not found')
-    const signer = await provider.getSigner()
-    contractRef.current = getRegistryContract(signer)
+    if (!CONTRACT_ADDRESS) throw new Error('VITE_CONTRACT_ADDRESS missing; redeploy or update .env')
+    const code = await provider.getCode(CONTRACT_ADDRESS)
+    if (!code || code === '0x') {
+      contractRef.current = null
+      throw new Error(`No contract deployed at ${CONTRACT_ADDRESS}. Redeploy with Hardhat and update VITE_CONTRACT_ADDRESS.`)
+    }
+    if (!contractRef.current) {
+      const signer = await provider.getSigner()
+      contractRef.current = getRegistryContract(signer)
+    }
     return contractRef.current
   }
 
@@ -35,7 +49,7 @@ export default function UploadPage() {
     setError('');
     try {
       await deleteFile(cid);
-      await refresh();
+      await refresh({ force: true });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -43,23 +57,29 @@ export default function UploadPage() {
     }
   }
 
-  async function refresh() {
+  const refresh = useCallback(async ({ force = false } = {}) => {
+    const now = Date.now()
+    if (!force && filesCacheRef.current.data.length && now - filesCacheRef.current.timestamp < CACHE_WINDOW_MS) {
+      setFiles(filesCacheRef.current.data)
+      return
+    }
     setLoading(true)
     setError('')
     try {
       const data = await listFiles()
       setFiles(data)
+      filesCacheRef.current = { data, timestamp: Date.now() }
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     health().then(() => setOk(true)).catch(() => setOk(false))
-    refresh()
-  }, [])
+    refresh({ force: true })
+  }, [refresh])
 
   const handleShare = async (file) => {
     const url = ipfsGatewayUrl(file.cid)
@@ -73,9 +93,14 @@ export default function UploadPage() {
     }
   }
 
-  const handleTransfer = (file) => {
-    setSelectedFile(file)
-    setTransferModalOpen(true)
+  const handleTransfer = async (file) => {
+    try {
+      await ensureRegistryContract()
+      setSelectedFile(file)
+      setTransferModalOpen(true)
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   const handleShareSuccess = (message) => {
@@ -88,7 +113,7 @@ export default function UploadPage() {
     setSuccessMessage(message)
     setTimeout(() => setSuccessMessage(''), 5000)
     setTransferModalOpen(false)
-    refresh() // Refresh the file list to update ownership
+    refresh({ force: true }) // Refresh the file list to update ownership
   }
 
   function onPickClick() {
@@ -105,8 +130,7 @@ export default function UploadPage() {
     setTxHash('')
     try {
       // Ensure wallet is connected and on correct chain
-      await ensureConnected()
-      const contract = await initializeContract()
+      const contract = await ensureRegistryContract()
       if (!selected || selected.length === 0) return;
       setLoading(true);
       for (const file of selected) {
@@ -121,12 +145,14 @@ export default function UploadPage() {
         try {
           // Estimate gas and set overrides for broad EVM compatibility
           // Get required registration fee
-          let feeValue = 0n
+          let feeValue
           try {
-            const fee = await contract.registerFee()
-            feeValue = fee
-          } catch {}
-          const gasEstimate = await contract.estimateGas.registerFile(res.cid, { value: feeValue })
+            feeValue = await contract.registerFee()
+          } catch (feeErr) {
+            console.error('Failed to read registerFee()', feeErr)
+            throw new Error('Unable to read register fee; verify the contract address and redeploy if needed.')
+          }
+          const gasEstimate = await contract.registerFile.estimateGas(res.cid, { value: feeValue })
           const gasLimit = (gasEstimate * 120n) / 100n // +20% buffer
           const provider = getProvider()
           const feeData = await provider.getFeeData()
@@ -154,7 +180,7 @@ export default function UploadPage() {
           setRegistering(false)
         }
       }
-      await refresh();
+      await refresh({ force: true });
     } catch (e) {
       setRegistering(false)
       setError(e.message);
@@ -197,7 +223,7 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
+    <div className="max-w-5xl mx-auto p-6 mt-30">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold text-white">Decentralized File Storage (IPFS)</h1>
         <p className="text-sm text-slate-200">Backend status: {ok ? <span className="text-green-300">healthy</span> : <span className="text-red-300">unavailable</span>}</p>
@@ -261,7 +287,8 @@ export default function UploadPage() {
           <h2 className="text-lg font-medium text-white">Files</h2>
           <button
             onClick={refresh}
-            className="px-3 py-1.5 rounded bg-gray-900/70 text-white text-sm hover:bg-gray-900 disabled:opacity-50"
+            className="action-button"
+            data-variant="refresh"
             disabled={loading}
           >
             Refresh
@@ -306,28 +333,32 @@ export default function UploadPage() {
                   <td className="px-4 py-2">
                     <div className="flex gap-2 flex-wrap">
                       <button
-                        className="px-3 py-1.5 rounded bg-blue-600/80 text-white text-sm hover:bg-blue-600"
+                        className="action-button"
+                        data-variant="download"
                         onClick={() => onDownload(f.cid, f.filename)}
                       >
                         Download
                       </button>
                       <button
-                        className="px-3 py-1.5 rounded bg-green-600/80 text-white text-sm hover:bg-green-600"
+                        className="action-button"
+                        data-variant="share"
                         onClick={() => handleShare(f)}
                         title="Copy file URL to clipboard"
                       >
                         Share
                       </button>
                       <button
-                        className="px-3 py-1.5 rounded bg-purple-600/80 text-white text-sm hover:bg-purple-600"
+                        className="action-button"
+                        data-variant="transfer"
                         onClick={() => handleTransfer(f)}
-                        disabled={!contractRef.current}
-                        title={!contractRef.current ? 'Connect wallet to transfer' : 'Transfer ownership'}
+                        disabled={!account || loading}
+                        title={!account ? 'Connect wallet to transfer' : 'Transfer ownership'}
                       >
                         Transfer
                       </button>
                       <button
-                        className="px-3 py-1.5 rounded bg-red-600/80 text-white text-sm hover:bg-red-600"
+                        className="action-button"
+                        data-variant="delete"
                         onClick={() => onDelete(f.cid)}
                         disabled={loading}
                       >

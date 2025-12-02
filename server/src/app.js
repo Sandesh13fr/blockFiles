@@ -3,35 +3,45 @@ import cors from "cors";
 import dotenv from "dotenv";
 import morgan from "morgan";
 import multer from "multer";
-import { getIpfsClient, uploadFileToPinata, unpinFileFromPinata } from "./ipfs.js";
+import { uploadFileToPinata, unpinFileFromPinata } from "./ipfs.js";
 import os from "os";
 import fs from "fs";
 import path from "path";
-import metaTxRouter from "./metaTx.js";
+import { fileURLToPath } from "url";
 // import { create as createIpfsClient } from 'ipfs-http-client';
 import { ensureSchema, query } from "./db.js";
 import { ethers } from 'ethers';
+import { answerDocQuestion, refreshDocIndex, docBotEnabled } from './docbot.js'
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const envCandidates = [
+  path.resolve(__dirname, "../../.env"),
+  path.resolve(__dirname, "../.env"),
+  path.resolve(process.cwd(), ".env")
+];
+for (const envPath of envCandidates) {
+  dotenv.config({ path: envPath, override: false });
+}
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const apiBasePath = process.env.API_BASE_PATH || "/api";
 
-// On-chain registry (for filtering + gasless transfers)
+// On-chain registry (for filtering only)
 let registry = null;
 async function initRegistry() {
   try {
     const rpc = process.env.RPC_URL || 'http://127.0.0.1:8545';
     const provider = new ethers.JsonRpcProvider(rpc);
-    const pk = process.env.SERVER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY; // reuse relayer key if provided
+    const pk = process.env.SERVER_PRIVATE_KEY;
     const address = process.env.CONTRACT_ADDRESS;
     if (!address) {
-      console.warn('CONTRACT_ADDRESS not set; registry filtering and gasless transfer disabled');
+      console.warn('CONTRACT_ADDRESS not set; registry filtering disabled');
       return;
     }
     if (!pk) {
-      console.warn('SERVER_PRIVATE_KEY / RELAYER_PRIVATE_KEY not set; gasless transfer disabled');
+      console.warn('SERVER_PRIVATE_KEY not set; registry reads will use public provider only');
     }
     const wallet = pk ? new ethers.Wallet(pk, provider) : provider;
     const abi = [
@@ -61,7 +71,6 @@ app.use(
 const upload = multer({ storage: multer.memoryStorage() });
 
 // API index and health check
-app.use(`${apiBasePath}`, metaTxRouter);
 app.get(`${apiBasePath}`, (req, res) => {
   res.json({
     ok: true,
@@ -71,7 +80,8 @@ app.get(`${apiBasePath}`, (req, res) => {
       upload: `${apiBasePath}/upload`,
       listFiles: `${apiBasePath}/files`,
       deleteFile: `${apiBasePath}/files/:cid`,
-      metaTx: `${apiBasePath}/meta-tx`,
+      docChat: `${apiBasePath}/chat/docbot`,
+      docChatReindex: `${apiBasePath}/chat/docbot/reindex`
     }
   });
 });
@@ -96,7 +106,38 @@ app.get(`${apiBasePath}/health`, async (req, res) => {
   }
 });
 
-// (Removed legacy signature-based gasless ownership transfer route: contract lacks meta execution logic)
+app.post(`${apiBasePath}/chat/docbot`, async (req, res) => {
+  if (!docBotEnabled()) {
+    return res.status(503).json({ error: 'Doc chatbot disabled. Provide GEMINI_API_KEY on the server.' })
+  }
+  const { message, history = [], refresh = false } = req.body || {}
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Message is required' })
+  }
+  try {
+    if (refresh) await refreshDocIndex()
+    const result = await answerDocQuestion({ question: message, history })
+    res.json(result)
+  } catch (err) {
+    console.error('Doc chatbot request failed', err)
+    res.status(500).json({ error: 'Doc chatbot failed', details: err.message })
+  }
+})
+
+app.post(`${apiBasePath}/chat/docbot/reindex`, async (req, res) => {
+  if (!docBotEnabled()) {
+    return res.status(503).json({ error: 'Doc chatbot disabled. Provide GEMINI_API_KEY on the server.' })
+  }
+  try {
+    const result = await refreshDocIndex()
+    res.json(result)
+  } catch (err) {
+    console.error('Doc chatbot reindex failed', err)
+    res.status(500).json({ error: 'Doc chatbot reindex failed', details: err.message })
+  }
+})
+
+// (Legacy meta-transaction routes removed; all actions now require direct wallet transactions.)
 
 // Upload endpoint
 app.post(
@@ -209,43 +250,3 @@ app.delete(`${apiBasePath}/files/:cid`, async (req, res, next) => {
   }
 });
 
-const RPC_URL = process.env.RPC_URL || 'http://127.0.0.1:8545';
-const RELAYER_KEY = process.env.SERVER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY;
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-
-const metaAbi = [
-  'function metaTransferOwnership(string cid,address newOwner,address owner,uint256 deadline,uint8 v,bytes32 r,bytes32 s)',
-  'function getOwner(string cid) view returns (address)',
-  'function getNonce(address user) view returns (uint256)'
-];
-
-let relayerWallet; // reuse existing `registry` defined above for filtering if meta ABI present
-if (RPC_URL && RELAYER_KEY && CONTRACT_ADDRESS) {
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  relayerWallet = new ethers.Wallet(RELAYER_KEY, provider);
-  registry = new ethers.Contract(CONTRACT_ADDRESS, metaAbi, relayerWallet);
-  console.log('[relay] Gasless transfer relayer ready:', relayerWallet.address);
-} else {
-  console.warn('[relay] Missing RPC_URL / RELAYER_KEY / CONTRACT_ADDRESS – gasless transfer disabled');
-}
-
-// Gasless transfer endpoint (expects metaTransferOwnership in contract; if not deployed this will fail)
-app.post('/api/gasless-transfer', async (req, res) => {
-  try {
-    if (!registry) return res.status(500).json({ error: 'Relayer not configured' });
-    const { cid, newOwner, owner, deadline, signature } = req.body || {};
-    if (!cid || !newOwner || !owner || !deadline || !signature) {
-      return res.status(400).json({ error: 'cid,newOwner,owner,deadline,signature required' });
-    }
-    // Basic validation before sending tx
-    const currentOwner = await registry.getOwner(cid);
-    if (currentOwner.toLowerCase() !== owner.toLowerCase()) {
-      return res.status(400).json({ error: 'Owner mismatch' });
-    }
-    const tx = await registry.metaTransferOwnership(cid, newOwner, owner, deadline, signature);
-    res.json({ txHash: tx.hash });
-  } catch (err) {
-    console.error('gasless-transfer error', err);
-    return res.status(500).json({ error: err.message || 'Failed' });
-  }
-});

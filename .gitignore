@@ -32,16 +32,6 @@ types/
 # Misc
 package-lock.json
 
-# Remove old contract/test artifacts
-contracts/Counter.sol
-contracts/Counter.t.sol
-contracts/Lock.sol
-
-# Remove unused artifact folders
-artifacts/contracts/Counter.sol/
-artifacts/contracts/Lock.sol/
-artifacts/build-info/
-
 # Remove unused typechain folders
 types/ethers-contracts/Counter.sol/
 types/ethers-contracts/Lock.sol/
@@ -58,3 +48,5 @@ types/ethers-contracts/factories/Lock.sol/
 *.njsproj
 *.sln
 *.sw?
+
+server/node_modules

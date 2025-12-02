@@ -8,6 +8,7 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
+    allowedHosts: ['3318b6db7add.ngrok-free.app'],
     proxy: {
       '/api': {
         target: 'http://localhost:4000',

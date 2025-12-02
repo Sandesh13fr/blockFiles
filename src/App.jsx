@@ -1,12 +1,15 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
 import './index.css'
 import Navbar from './components/Navbar'
-import Home from './pages/Home'
-import UploadPage from './pages/UploadPage'
-import About from './pages/About'
-import ClaimAccessPage from './pages/ClaimAccessPage'
 import AppBackground from './AppBackground'
 import Footer from './components/Footer'
+import Home from './pages/Home'
+
+const UploadPage = lazy(() => import('./pages/UploadPage'))
+const About = lazy(() => import('./pages/About'))
+const ClaimAccessPage = lazy(() => import('./pages/ClaimAccessPage'))
+const DocChat = lazy(() => import('./pages/DocChat'))
 
 export default function AppShell() {
   return (
@@ -15,12 +18,15 @@ export default function AppShell() {
         <AppBackground />
         <Navbar />
         <div className="app-content relative z-10">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/upload" element={<UploadPage />} />
-            <Route path="/about" element={<About />} />
-            <Route path="/claim/:cid/:linkId" element={<ClaimAccessPage />} />
-          </Routes>
+          <Suspense fallback={<div className="p-10 text-center text-white/70">Loading…</div>}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/upload" element={<UploadPage />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/claim/:cid/:linkId" element={<ClaimAccessPage />} />
+              <Route path="/chat" element={<DocChat />} />
+            </Routes>
+          </Suspense>
           <Footer />
         </div>
       </div>

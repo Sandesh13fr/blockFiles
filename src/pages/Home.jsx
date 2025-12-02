@@ -7,7 +7,7 @@ export default function Home() {
   return (
     <div>
       <motion.section
-        className="pt-2 pb-10 sm:pb-16 lg:pb-24"
+        className="pt-2 pb-10 sm:pb-16 lg:pb-24 mt-30"
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.5 }}
@@ -95,33 +95,42 @@ export default function Home() {
         <div className="px-4 mx-auto max-w-6xl sm:px-6 lg:px-8">
           <h2 className="text-3xl sm:text-4xl font-semibold text-white mb-8">Features</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="glass rounded-xl p-6">
-              <h3 className="text-white font-semibold text-xl">Decentralized Storage (IPFS)</h3>
-              <p className="text-slate-100 mt-2 text-base">Files are content‑addressed with CIDs for integrity and global retrieval.</p>
-            </div>
-            <div className="glass rounded-xl p-6">
-              <h3 className="text-white font-semibold text-xl">On‑chain Ownership</h3>
-              <p className="text-slate-100 mt-2 text-base">Optionally register CIDs to your wallet for public, tamper‑resistant proof.</p>
-            </div>
-            <div className="glass rounded-xl p-6">
-              <h3 className="text-white font-semibold text-xl">Simple Sharing</h3>
-              <p className="text-slate-100 mt-2 text-base">Share a CID; recipients can fetch via any IPFS gateway or node.</p>
-            </div>
-            <div className="glass rounded-xl p-6">
-              <h3 className="text-white font-semibold text-xl">Wallet‑first UX</h3>
-              <p className="text-slate-100 mt-2 text-base">No secrets stored; all signing happens in MetaMask from your device.</p>
-            </div>
-            <div className="glass rounded-xl p-6">
-              <h3 className="text-white font-semibold text-xl">Transparent Metadata</h3>
-              <p className="text-slate-100 mt-2 text-base">Lightweight off‑chain metadata for fast file listings and management.</p>
-            </div>
-            <div className="glass rounded-xl p-6">
-              <h3 className="text-white font-semibold text-xl">Gateway Flexibility</h3>
-              <p className="text-slate-100 mt-2 text-base">Use public gateways today; bring your own pinning or node tomorrow.</p>
-            </div>
+            <FeatureCard
+              title="AI Doc Assistant"
+              body="Chat with anything you pinned on Pinata. Gemini indexes your PDFs, DOCX, CSV, or plain text and cites the exact CID for every answer."
+            />
+            <FeatureCard
+              title="On-chain Ownership & Transfers"
+              body="Register a CID to your wallet, transfer it securely, and prove authenticity directly from the FileOwnershipRegistry smart contract."
+            />
+            <FeatureCard
+              title="Access & Sharing Links"
+              body="Generate read/write links, revoke access instantly, or just drop a CID so teammates can fetch from any IPFS gateway."
+            />
+            <FeatureCard
+              title="Wallet-first Security"
+              body="Everything is signed locally in MetaMask—no seed phrases, no custodial signing, no servers holding your keys."
+            />
+            <FeatureCard
+              title="Pinata + PostgreSQL Sync"
+              body="Uploads are pinned, recorded in Postgres, and synced to the chatbot index so your metadata stays searchable and auditable."
+            />
+            <FeatureCard
+              title="Scalable IPFS Storage"
+              body="Store once, fetch anywhere. Bring your own gateway, run a node, or stay on public infrastructure while keeping content-addressed integrity."
+            />
           </div>
         </div>
       </section>
+    </div>
+  )
+}
+
+function FeatureCard({ title, body }) {
+  return (
+    <div className="glass rounded-xl p-6">
+      <h3 className="text-white font-semibold text-xl">{title}</h3>
+      <p className="text-slate-100 mt-2 text-base">{body}</p>
     </div>
   )
 }

@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 
 export default function About() {
   return (
-    <div className="px-4 mx-auto max-w-6xl sm:px-6 lg:px-8 py-10 sm:py-14 lg:py-20">
+    <div className="px-4 mx-auto max-w-6xl sm:px-6 lg:px-8 py-10 sm:py-14 lg:py-20 mt-25">
       <div className="max-w-3xl mx-auto text-center">
         <motion.h1
           className="text-3xl sm:text-4xl lg:text-5xl font-semibold text-white"
@@ -76,6 +76,37 @@ export default function About() {
           transition={{ duration: 0.7, delay: 0.2, ease: 'easeOut' }}
         >
           <img src="/src/assets/logo.png" alt="blockFiles Logo" className="w-full h-auto rounded-2xl max-w-md mx-auto" />
+        </motion.div>
+      </div>
+
+      <div className="mt-12 grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+        <motion.div
+          initial={{ opacity: 0, x: -40 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          viewport={{ once: true, amount: 0.5 }}
+          transition={{ duration: 0.7, ease: 'easeOut' }}
+        >
+          <img
+            src="/src/assets/interlinked_files.png"
+            alt="Interlinked files illustration"
+            className="w-full h-auto rounded-2xl shadow-2xl"
+          />
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, x: 40 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          viewport={{ once: true, amount: 0.5 }}
+          transition={{ duration: 0.7, delay: 0.15, ease: 'easeOut' }}
+        >
+          <h2 className="text-2xl sm:text-3xl font-semibold text-white">Built for teams</h2>
+          <p className="mt-3 text-slate-100">
+            Share one CID and everyone works from the same, verified copy. blockFiles keeps every revision portable,
+            readable, and easy to hand off—no waiting, no vendor lock-in.
+          </p>
+          <p className="mt-3 text-slate-100">
+            Sync once, prove ownership on-chain if you need it, and let peers fetch the file straight from IPFS.
+            That’s all there is to staying aligned.
+          </p>
         </motion.div>
       </div>
     </div>
