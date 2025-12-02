@@ -4,7 +4,7 @@ export default function Footer() {
       <div className="px-4 mx-auto max-w-7xl sm:px-6 lg:px-8">
         <div className="glass rounded-xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <img src="/src/assets/logo.png" alt="logo" className="w-10 h-10" />
+            <img src="https://iili.io/fzFH7Mx.png" alt="logo" className="w-10 h-10" />
             <span className="text-white font-semibold">blockFiles</span>
           </div>
           <ul className="flex flex-wrap items-center justify-center gap-6 text-slate-100">

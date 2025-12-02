@@ -32,7 +32,7 @@ export default function Navbar() {
         <div className="flex items-center gap-3">
           <NavLink to="/" aria-label="Home" className="flex items-center gap-2">
             <div className="h-10 w-10 rounded-2xl bg-gradient-to-br bg-red-50 p-[1px]">
-              <img src="/src/assets/logo.png" alt="blockFiles Logo" className="w-full h-auto rounded-1xl max-w-xl mx-auto" />
+              <img src="https://iili.io/fzFH7Mx.png" alt="blockFiles Logo" className="w-full h-auto rounded-1xl max-w-xl mx-auto" />
             </div>
             <div className="hidden flex-col leading-tight sm:flex">
               <span className="font-semibold text-white text-base">blockFiles</span>

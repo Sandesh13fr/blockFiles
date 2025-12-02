@@ -32,7 +32,7 @@ export default function About() {
           viewport={{ once: true, amount: 0.5 }}
           transition={{ duration: 0.7, ease: 'easeOut' }}
         >
-          <img src="/src/assets/howItWorks.png" alt="IPFS Illustration" className="w-full h-auto rounded-2xl" />
+          <img src="https://iili.io/fzF23wF.md.png" alt="IPFS Illustration" className="w-full h-auto rounded-2xl" />
         </motion.div>
         <motion.div
           initial={{ opacity: 0, x: 40 }}
@@ -75,7 +75,7 @@ export default function About() {
           viewport={{ once: true, amount: 0.5 }}
           transition={{ duration: 0.7, delay: 0.2, ease: 'easeOut' }}
         >
-          <img src="/src/assets/logo.png" alt="blockFiles Logo" className="w-full h-auto rounded-2xl max-w-md mx-auto" />
+          <img src="https://iili.io/fzFH7Mx.png" alt="blockFiles Logo" className="w-full h-auto rounded-2xl max-w-md mx-auto" />
         </motion.div>
       </div>
 
@@ -87,7 +87,7 @@ export default function About() {
           transition={{ duration: 0.7, ease: 'easeOut' }}
         >
           <img
-            src="/src/assets/interlinked_files.png"
+            src="https://iili.io/fzF3AJV.md.png"
             alt="Interlinked files illustration"
             className="w-full h-auto rounded-2xl shadow-2xl"
           />
