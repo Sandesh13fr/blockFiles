@@ -21,6 +21,7 @@ for (const envPath of envCandidates) {
 
 const PINATA_JWT = process.env.PINATA_JWT;
 const PINATA_GATEWAY = process.env.PINATA_GATEWAY;
+const PINATA_GATEWAY_KEY = process.env.PINATA_GATEWAY_KEY;
 
 if (!PINATA_JWT) {
   throw new Error(
@@ -30,7 +31,8 @@ if (!PINATA_JWT) {
 
 const pinata = new PinataSDK({
   pinataJwt: PINATA_JWT,
-  pinataGateway: PINATA_GATEWAY
+  pinataGateway: PINATA_GATEWAY,
+  pinataGatewayKey: PINATA_GATEWAY_KEY
 });
 
 /**

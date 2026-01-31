@@ -4,6 +4,7 @@ import { TextDecoder } from 'util'
 import pdf from 'pdf-parse'
 import mammoth from 'mammoth'
 import { query } from './db.js'
+import { getIpfsClient } from './ipfs.js'
 
 function normalizeGateway(raw) {
   const fallback = 'https://gateway.pinata.cloud'
@@ -13,6 +14,7 @@ function normalizeGateway(raw) {
 }
 
 const PINATA_GATEWAY = normalizeGateway(process.env.PINATA_GATEWAY).replace(/\/$/, '')
+const PINATA_GATEWAY_KEY = (process.env.PINATA_GATEWAY_KEY || '').trim()
 const MAX_FILES = Number(process.env.DOCBOT_MAX_FILES || 15)
 const MAX_FILE_BYTES = Number(process.env.DOCBOT_MAX_FILE_BYTES || 50 * 1024 * 1024)
 const MAX_CHUNKS_PER_FILE = Number(process.env.DOCBOT_MAX_CHUNKS_PER_FILE || 8)
@@ -131,15 +133,56 @@ async function extractTextFromBuffer(buffer, contentType, cid) {
   return decoder.decode(buffer)
 }
 
-async function fetchPinataText(cid) {
+async function gatewayDataToBuffer(data) {
+  if (!data) return Buffer.alloc(0)
+  if (Buffer.isBuffer(data)) return data
+  if (data instanceof ArrayBuffer) return Buffer.from(data)
+  if (data instanceof Uint8Array) return Buffer.from(data)
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    const buf = await data.arrayBuffer()
+    return Buffer.from(buf)
+  }
+  if (typeof data === 'string') return Buffer.from(data, 'utf-8')
+  if (typeof data === 'object') return Buffer.from(JSON.stringify(data))
+  return Buffer.alloc(0)
+}
+
+async function downloadCidBytes(cid) {
+  const client = await getIpfsClient().catch(err => {
+    console.warn('Docbot Pinata client unavailable', err.message)
+    return null
+  })
+
+  if (client?.gateways?.public?.get) {
+    try {
+      const sdkResponse = await client.gateways.public.get(cid)
+      const buffer = await gatewayDataToBuffer(sdkResponse.data)
+      return { buffer, contentType: sdkResponse.contentType || '' }
+    } catch (err) {
+      console.warn('Docbot Pinata SDK fetch failed for', cid, err.message)
+    }
+  }
+
   const gateway = PINATA_GATEWAY.endsWith('/ipfs') ? PINATA_GATEWAY : `${PINATA_GATEWAY}/ipfs`
-  const url = `${gateway}/${cid}`
-  const res = await fetch(url)
+  const keyQuery = PINATA_GATEWAY_KEY ? `?pinataGatewayKey=${encodeURIComponent(PINATA_GATEWAY_KEY)}` : ''
+  const url = `${gateway}/${cid}${keyQuery}`
+  const headers = PINATA_GATEWAY_KEY ? { 'x-pinata-gateway-key': PINATA_GATEWAY_KEY } : undefined
+  const res = await fetch(url, { headers })
   if (!res.ok) throw new Error(`Pinata fetch failed (${res.status}) for ${cid}`)
   const contentType = res.headers.get('content-type') || ''
   const arrayBuffer = await res.arrayBuffer()
-  const trimmedArrayBuffer = arrayBuffer.byteLength > MAX_FILE_BYTES ? arrayBuffer.slice(0, MAX_FILE_BYTES) : arrayBuffer
-  const limitedBuffer = Buffer.from(trimmedArrayBuffer)
+  return { buffer: Buffer.from(arrayBuffer), contentType }
+}
+
+async function fetchPinataText(cid) {
+  const result = await downloadCidBytes(cid)
+  if (!result) throw new Error(`Pinata fetch failed for ${cid}`)
+  const { buffer, contentType } = result
+  if (!buffer?.length) {
+    console.warn('Docbot fetched empty buffer', { cid, contentType })
+    return ''
+  }
+  const limitedBuffer = buffer.length > MAX_FILE_BYTES ? buffer.subarray(0, MAX_FILE_BYTES) : buffer
   const text = await extractTextFromBuffer(limitedBuffer, contentType, cid)
   if (!text || !text.trim()) {
     console.warn('Docbot extracted empty text', { cid, contentType, bytes: limitedBuffer.length })
