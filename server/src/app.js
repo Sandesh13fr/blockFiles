@@ -27,6 +27,11 @@ for (const envPath of envCandidates) {
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const apiBasePath = process.env.API_BASE_PATH || "/api";
+// Registry filter modes:
+//  - "strict" (default): only return rows that are confirmed on-chain
+//  - "soft": try on-chain first, but if nothing resolves, return DB rows
+//  - "off": skip on-chain filtering entirely
+const registryFilterMode = (process.env.REGISTRY_FILTER_MODE || 'soft').toLowerCase();
 
 // On-chain registry (for filtering only)
 let registry = null;
@@ -108,7 +113,7 @@ app.get(`${apiBasePath}/health`, async (req, res) => {
 
 app.post(`${apiBasePath}/chat/docbot`, async (req, res) => {
   if (!docBotEnabled()) {
-    return res.status(503).json({ error: 'Doc chatbot disabled. Provide GEMINI_API_KEY on the server.' })
+    return res.status(503).json({ error: 'Doc chatbot disabled. Provide OPENROUTER_API_KEY on the server.' })
   }
   const { message, history = [], refresh = false } = req.body || {}
   if (!message || !message.trim()) {
@@ -126,7 +131,7 @@ app.post(`${apiBasePath}/chat/docbot`, async (req, res) => {
 
 app.post(`${apiBasePath}/chat/docbot/reindex`, async (req, res) => {
   if (!docBotEnabled()) {
-    return res.status(503).json({ error: 'Doc chatbot disabled. Provide GEMINI_API_KEY on the server.' })
+    return res.status(503).json({ error: 'Doc chatbot disabled. Provide OPENROUTER_API_KEY on the server.' })
   }
   try {
     const result = await refreshDocIndex()
@@ -187,18 +192,32 @@ app.get(`${apiBasePath}/files`, async (req, res, next) => {
 
     // Enforce on-chain registration: only return files that are registered in the contract
     let filtered = rows;
-    if (registry) {
+    if (registry && registryFilterMode !== 'off') {
       const checked = await Promise.all(
         rows.map(async (f) => {
           try {
             const owner = await registry.getOwner(f.cid);
             return owner && owner !== ethers.ZeroAddress ? f : null;
-          } catch {
+          } catch (err) {
+            console.warn('Registry check failed for', f.cid, err.message);
             return null;
           }
         })
       );
-      filtered = checked.filter(Boolean);
+      const onChainRows = checked.filter(Boolean);
+
+      if (registryFilterMode === 'strict') {
+        filtered = onChainRows;
+      } else {
+        // Soft mode: if on-chain data is empty (e.g., after local chain reset), fall back to DB rows
+        const dropped = rows.length - onChainRows.length;
+        if (dropped && !onChainRows.length) {
+          console.warn('Registry returned no owners; returning DB rows because REGISTRY_FILTER_MODE=soft');
+          filtered = rows;
+        } else {
+          filtered = onChainRows;
+        }
+      }
     }
 
     res.json(filtered);

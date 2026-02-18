@@ -164,6 +164,9 @@ IPFS_API_URL=http://127.0.0.1:5001/api/v0
 # Backend Configuration
 PORT=4000
 API_BASE_PATH=/api
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_CHAT_MODEL=openai/gpt-4o-mini
+OPENROUTER_EMBED_MODEL=openai/text-embedding-3-small
 
 # Database Configuration
 PGUSER=postgres

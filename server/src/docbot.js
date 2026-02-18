@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createHash } from 'crypto'
 import { TextDecoder } from 'util'
 import pdf from 'pdf-parse'
@@ -21,13 +20,13 @@ const MAX_CHUNKS_PER_FILE = Number(process.env.DOCBOT_MAX_CHUNKS_PER_FILE || 8)
 const CHUNK_SIZE = Number(process.env.DOCBOT_CHUNK_SIZE || 900)
 const CHUNK_OVERLAP = Number(process.env.DOCBOT_CHUNK_OVERLAP || 150)
 const INDEX_TTL = Number(process.env.DOCBOT_INDEX_TTL_MS || 5 * 60 * 1000)
-const DEFAULT_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-pro'
-const DEFAULT_EMBED_MODEL = process.env.GEMINI_EMBED_MODEL || 'text-embedding-004'
+const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '')
+const OPENROUTER_SITE_URL = (process.env.OPENROUTER_SITE_URL || '').trim()
+const OPENROUTER_APP_NAME = (process.env.OPENROUTER_APP_NAME || '').trim()
+const DEFAULT_CHAT_MODEL = process.env.OPENROUTER_CHAT_MODEL || 'openai/gpt-4o-mini'
+const DEFAULT_EMBED_MODEL = process.env.OPENROUTER_EMBED_MODEL || 'openai/text-embedding-3-small'
 
-const hasGemini = Boolean(process.env.GEMINI_API_KEY)
-const genAI = hasGemini ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null
-let embedModel
-let chatModel
+const hasOpenRouter = Boolean(process.env.OPENROUTER_API_KEY)
 
 const indexState = {
   chunks: [],
@@ -35,10 +34,27 @@ const indexState = {
   building: null
 }
 
-function ensureGemini() {
-  if (!genAI) throw new Error('Doc chatbot requires GEMINI_API_KEY')
-  if (!embedModel) embedModel = genAI.getGenerativeModel({ model: DEFAULT_EMBED_MODEL })
-  if (!chatModel) chatModel = genAI.getGenerativeModel({ model: DEFAULT_CHAT_MODEL })
+function ensureOpenRouter() {
+  if (!hasOpenRouter) throw new Error('Doc chatbot requires OPENROUTER_API_KEY')
+}
+
+function openRouterHeaders() {
+  const headers = {
+    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+    'Content-Type': 'application/json'
+  }
+  if (OPENROUTER_SITE_URL) headers['HTTP-Referer'] = OPENROUTER_SITE_URL
+  if (OPENROUTER_APP_NAME) headers['X-Title'] = OPENROUTER_APP_NAME
+  return headers
+}
+
+async function parseOpenRouterResponse(res, purpose) {
+  const body = await res.json().catch(() => null)
+  if (!res.ok) {
+    const details = body?.error?.message || body?.message || `${purpose} failed (${res.status})`
+    throw new Error(details)
+  }
+  return body
 }
 
 function chunkText(raw) {
@@ -191,9 +207,21 @@ async function fetchPinataText(cid) {
 }
 
 async function embedText(text) {
-  ensureGemini()
-  const result = await embedModel.embedContent(text)
-  return result.embedding.values
+  ensureOpenRouter()
+  const res = await fetch(`${OPENROUTER_BASE_URL}/embeddings`, {
+    method: 'POST',
+    headers: openRouterHeaders(),
+    body: JSON.stringify({
+      model: DEFAULT_EMBED_MODEL,
+      input: text
+    })
+  })
+  const body = await parseOpenRouterResponse(res, 'Embedding request')
+  const embedding = body?.data?.[0]?.embedding
+  if (!Array.isArray(embedding) || !embedding.length) {
+    throw new Error('Embedding request returned no vector')
+  }
+  return embedding
 }
 
 function cosineSimilarity(a, b) {
@@ -211,7 +239,7 @@ function cosineSimilarity(a, b) {
 }
 
 async function buildDocIndex(force = false) {
-  if (!hasGemini) return []
+  if (!hasOpenRouter) return []
   if (!force && indexState.chunks.length && Date.now() - indexState.lastIndexed < INDEX_TTL) {
     return indexState.chunks
   }
@@ -251,14 +279,14 @@ async function buildDocIndex(force = false) {
 }
 
 export async function refreshDocIndex() {
-  if (!hasGemini) return { ok: false, reason: 'GEMINI_API_KEY missing' }
+  if (!hasOpenRouter) return { ok: false, reason: 'OPENROUTER_API_KEY missing' }
   await buildDocIndex(true)
   return { ok: true, chunks: indexState.chunks.length }
 }
 
 export async function answerDocQuestion({ question, history = [] }) {
-  if (!hasGemini) {
-    throw new Error('Doc chatbot disabled. Provide GEMINI_API_KEY to enable it.')
+  if (!hasOpenRouter) {
+    throw new Error('Doc chatbot disabled. Provide OPENROUTER_API_KEY to enable it.')
   }
   const prompt = question?.trim()
   if (!prompt) throw new Error('Question is required')
@@ -287,14 +315,34 @@ export async function answerDocQuestion({ question, history = [] }) {
 - Cite supporting chunks inline using their reference number like [#1].
 - If the answer cannot be found in the context, state that clearly instead of guessing.`
 
-  const parts = [instructions]
-  if (historyText) parts.push(`Conversation so far:\n${historyText}`)
-  parts.push(`Context:\n${context || 'None'}`)
-  parts.push(`Question: ${prompt}`)
+  const promptParts = []
+  if (historyText) promptParts.push(`Conversation so far:\n${historyText}`)
+  promptParts.push(`Context:\n${context || 'None'}`)
+  promptParts.push(`Question: ${prompt}`)
 
-  ensureGemini()
-  const result = await chatModel.generateContent(parts.join('\n\n'))
-  const answer = result.response.text()
+  ensureOpenRouter()
+  const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: openRouterHeaders(),
+    body: JSON.stringify({
+      model: DEFAULT_CHAT_MODEL,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: instructions },
+        { role: 'user', content: promptParts.join('\n\n') }
+      ]
+    })
+  })
+  const body = await parseOpenRouterResponse(res, 'Chat completion request')
+  const rawAnswer = body?.choices?.[0]?.message?.content
+  const answer = typeof rawAnswer === 'string'
+    ? rawAnswer
+    : Array.isArray(rawAnswer)
+      ? rawAnswer.map(part => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
+      : ''
+  if (!answer) {
+    throw new Error('Chat completion request returned no answer text')
+  }
 
   return {
     answer,
@@ -309,5 +357,5 @@ export async function answerDocQuestion({ question, history = [] }) {
 }
 
 export function docBotEnabled() {
-  return hasGemini
+  return hasOpenRouter
 }
