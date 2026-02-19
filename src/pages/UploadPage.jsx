@@ -139,6 +139,7 @@ export default function UploadPage() {
         if (!res?.cid) {
           throw new Error('Upload failed: missing CID');
         }
+        const createdOnServer = res?.created ?? true
 
         // 2) Register on-chain; user pays gas via MetaMask
         setRegistering(true);
@@ -174,7 +175,9 @@ export default function UploadPage() {
           setTimeout(() => setSuccessMessage(''), 4000)
         } catch (txErr) {
           // 3) Roll back server record on failure
-          try { await deleteFile(res.cid) } catch {}
+          if (createdOnServer) {
+            try { await deleteFile(res.cid) } catch {}
+          }
           throw txErr
         } finally {
           setRegistering(false)

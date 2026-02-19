@@ -7,6 +7,7 @@ import { uploadFileToPinata, unpinFileFromPinata } from "./ipfs.js";
 import os from "os";
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 // import { create as createIpfsClient } from 'ipfs-http-client';
 import { ensureSchema, query } from "./db.js";
@@ -72,8 +73,13 @@ app.use(
 // Use dynamic IPFS client with Infura fallback to local node
 // See ./ipfs.js for logic
 
-// Multer setup (memory storage)
-const upload = multer({ storage: multer.memoryStorage() });
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+
+// Multer setup (memory storage, size-limited)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+});
 
 // API index and health check
 app.get(`${apiBasePath}`, (req, res) => {
@@ -149,6 +155,9 @@ app.post(
   `${apiBasePath}/upload`,
   upload.single("file"),
   async (req, res, next) => {
+    let tempPath = null;
+    let cid = null;
+    let dbSaved = false;
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
@@ -156,29 +165,91 @@ app.post(
 
       const filename = req.file.originalname;
       const size = req.file.size;
+      const safeFilename = path
+        .basename(filename || "upload.bin")
+        .replace(/[^a-zA-Z0-9._() -]/g, "_")
+        .slice(-80);
+
       // Save buffer to temp file
-      const tempPath = path.join(os.tmpdir(), `${Date.now()}_${filename}`);
+      tempPath = path.join(
+        os.tmpdir(),
+        `blockfiles_${Date.now()}_${process.pid}_${randomUUID()}_${safeFilename}`
+      );
       await fs.promises.writeFile(tempPath, req.file.buffer);
 
       // Upload to Pinata
-      const upload = await uploadFileToPinata(tempPath);
-      // Remove temp file
-      await fs.promises.unlink(tempPath);
+      const pinataUpload = await uploadFileToPinata(tempPath);
 
       // Pinata returns an object with ipfsHash (CID)
-      const cid = upload.ipfsHash || upload.IpfsHash || upload.cid || upload.CID || upload.hash;
+      cid =
+        pinataUpload.ipfsHash ||
+        pinataUpload.IpfsHash ||
+        pinataUpload.cid ||
+        pinataUpload.CID ||
+        pinataUpload.hash;
       if (!cid) {
-        return res.status(500).json({ error: "Pinata upload failed", details: upload });
+        return res.status(500).json({ error: "Pinata upload failed", details: pinataUpload });
       }
 
-      await query(
-        "INSERT INTO files (filename, cid, size) VALUES ($1, $2, $3)",
+      const insertResult = await query(
+        `INSERT INTO files (filename, cid, size)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (cid) DO NOTHING
+         RETURNING id, filename, cid, size, upload_date`,
         [filename, cid, size]
       );
+      dbSaved = true;
+      let row = insertResult.rows[0];
+      let created = true;
+      if (!row) {
+        created = false;
+        const updateResult = await query(
+          `UPDATE files
+           SET filename = $1,
+               size = $3,
+               upload_date = CURRENT_TIMESTAMP
+           WHERE cid = $2
+           RETURNING id, filename, cid, size, upload_date`,
+          [filename, cid, size]
+        );
+        row = updateResult.rows[0];
+      }
+      if (!row) {
+        throw new Error("Failed to persist file metadata");
+      }
 
-      res.status(201).json({ filename, cid, size });
+      res.status(201).json({
+        id: row.id,
+        filename: row.filename,
+        cid: row.cid,
+        size: row.size,
+        upload_date: row.upload_date,
+        created,
+      });
     } catch (err) {
       next(err);
+    } finally {
+      if (tempPath) {
+        try {
+          await fs.promises.unlink(tempPath);
+        } catch (cleanupErr) {
+          if (cleanupErr.code !== "ENOENT") {
+            console.warn("Temp upload cleanup failed:", cleanupErr.message);
+          }
+        }
+      }
+
+      if (cid && !dbSaved) {
+        // Best-effort compensation: avoid orphaning fresh pins when DB persist fails.
+        try {
+          const exists = await query("SELECT 1 FROM files WHERE cid = $1 LIMIT 1", [cid]);
+          if (!exists.rowCount) {
+            await unpinFileFromPinata(cid);
+          }
+        } catch (rollbackErr) {
+          console.error("Failed to compensate pin after DB error:", rollbackErr.message || rollbackErr);
+        }
+      }
     }
   }
 );
@@ -232,6 +303,15 @@ app.get(`${apiBasePath}/files`, async (req, res, next) => {
 // Error handler
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res
+        .status(413)
+        .json({ error: `File too large. Max upload size is ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` });
+    }
+    return res.status(400).json({ error: err.message || "Upload error" });
+  }
+
   console.error(err);
   res.status(500).json({ error: "Internal Server Error" });
 });
@@ -254,15 +334,34 @@ app.use((err, req, res, next) => {
 app.delete(`${apiBasePath}/files/:cid`, async (req, res, next) => {
   try {
     const { cid } = req.params;
-  // Unpin from Pinata
+    const deleted = await query(
+      "DELETE FROM files WHERE cid = $1 RETURNING filename, cid, size, upload_date",
+      [cid]
+    );
+    if (!deleted.rowCount) {
+      return res.status(404).json({ error: "File not found", cid });
+    }
+
+    // Unpin from Pinata. If this fails, restore DB metadata so state remains consistent.
     try {
       await unpinFileFromPinata(cid);
     } catch (unpinErr) {
-      console.error('Pinata unpin error:', unpinErr);
-      return res.status(500).json({ error: 'Pinata unpin failed', details: unpinErr && unpinErr.message ? unpinErr.message : unpinErr });
+      const row = deleted.rows[0];
+      try {
+        await query(
+          "INSERT INTO files (filename, cid, size, upload_date) VALUES ($1, $2, $3, $4) ON CONFLICT (cid) DO NOTHING",
+          [row.filename, row.cid, row.size, row.upload_date]
+        );
+      } catch (restoreErr) {
+        console.error("Failed to restore file metadata after unpin failure:", restoreErr);
+      }
+      console.error("Pinata unpin error:", unpinErr);
+      return res.status(502).json({
+        error: "Pinata unpin failed",
+        details: unpinErr && unpinErr.message ? unpinErr.message : unpinErr,
+      });
     }
-    // Remove from database
-    await query('DELETE FROM files WHERE cid = $1', [cid]);
+
     res.json({ success: true, cid });
   } catch (err) {
     next(err);

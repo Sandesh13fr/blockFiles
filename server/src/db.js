@@ -35,4 +35,31 @@ export async function ensureSchema() {
       upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`
   );
+
+  // Keep one row per CID before adding uniqueness guarantees.
+  await query(
+    `DELETE FROM files a
+     USING files b
+     WHERE a.id > b.id
+       AND a.cid = b.cid;`
+  );
+
+  await query(`DELETE FROM files WHERE cid IS NULL OR cid = '';`);
+
+  await query(`ALTER TABLE files ALTER COLUMN cid SET NOT NULL;`);
+
+  await query(
+    `DO $$
+     BEGIN
+       IF NOT EXISTS (
+         SELECT 1
+         FROM pg_constraint
+         WHERE conname = 'files_cid_unique'
+       ) THEN
+         ALTER TABLE files
+         ADD CONSTRAINT files_cid_unique UNIQUE (cid);
+       END IF;
+     END
+     $$;`
+  );
 } 

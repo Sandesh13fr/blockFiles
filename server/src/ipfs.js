@@ -75,7 +75,6 @@ try {
  */
 export async function uploadFileToPinata(filePath) {
   try {
-    const fileStream = fs.createReadStream(filePath);
     const fileName = path.basename(filePath);
     const file = new File([await fs.promises.readFile(filePath)], fileName);
     const result = await pinata.upload.public.file(file);
