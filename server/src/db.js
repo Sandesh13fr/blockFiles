@@ -5,14 +5,45 @@ dotenv.config();
 
 const databaseUrl = process.env.DATABASE_URL;
 
+function envFlag(name, defaultValue = false) {
+  const value = process.env[name];
+  if (value === undefined) return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+function looksLikeSupabaseConnection(url) {
+  if (!url) return false;
+  return /supabase\.(co|com)/i.test(url);
+}
+
+function buildSslConfig() {
+  const sslMode = (process.env.PGSSLMODE || '').toLowerCase();
+  const enableSsl =
+    envFlag('DB_ENABLE_SSL', false) ||
+    sslMode === 'require' ||
+    looksLikeSupabaseConnection(databaseUrl);
+
+  if (!enableSsl) return false;
+
+  const rejectUnauthorized = envFlag(
+    'DB_SSL_REJECT_UNAUTHORIZED',
+    !looksLikeSupabaseConnection(databaseUrl)
+  );
+
+  return { rejectUnauthorized };
+}
+
+const ssl = buildSslConfig();
+
 const pool = databaseUrl
-  ? new Pool({ connectionString: databaseUrl })
+  ? new Pool({ connectionString: databaseUrl, ssl })
   : new Pool({
       host: process.env.PGHOST || 'localhost',
       port: Number(process.env.PGPORT || 5432),
       database: process.env.PGDATABASE || 'postgres',
       user: process.env.PGUSER || 'postgres',
       password: process.env.PGPASSWORD || 'root',
+      ssl,
     });
 
 export async function query(text, params) {

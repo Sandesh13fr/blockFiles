@@ -169,6 +169,14 @@ OPENROUTER_CHAT_MODEL=openai/gpt-4o-mini
 OPENROUTER_EMBED_MODEL=openai/text-embedding-3-small
 
 # Database Configuration
+# Preferred for hosted Postgres (Supabase/Neon/Render):
+DATABASE_URL=postgresql://<user>:<password>@<host>:6543/postgres?sslmode=require
+
+# Optional explicit SSL flags (defaults are Supabase-safe when DATABASE_URL contains supabase):
+DB_ENABLE_SSL=true
+DB_SSL_REJECT_UNAUTHORIZED=false
+
+# Local fallback (used only when DATABASE_URL is not set):
 PGUSER=postgres
 PGPASSWORD=root
 PGHOST=localhost

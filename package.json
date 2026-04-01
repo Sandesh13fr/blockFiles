@@ -11,6 +11,7 @@
     "start": "node server/src/app.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.101.0",
     "@tailwindcss/vite": "^4.1.13",
     "axios": "^1.12.0",
     "cors": "^2.8.5",
