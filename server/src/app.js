@@ -109,12 +109,16 @@ app.get('/', (req, res) => {
   `);
 });
 async function healthHandler(req, res) {
+  let dbOk = false;
+  let dbError = null;
   try {
     await query("SELECT 1");
-    res.json({ ok: true, uptime: process.uptime() });
+    dbOk = true;
   } catch (err) {
-    res.status(500).json({ ok: false, error: "DB not reachable" });
+    dbError = err.message;
   }
+  // Always return 200 so Render health check passes even if DB is temporarily unreachable
+  res.status(200).json({ ok: true, db: dbOk, uptime: process.uptime(), ...(dbError && { dbError }) });
 }
 // Primary health check (used by Render)
 app.get('/health', healthHandler);

@@ -25,9 +25,11 @@ function buildSslConfig() {
 
   if (!enableSsl) return false;
 
+  // For Supabase pooler connections always disable cert verification
+  // (pooler uses a self-signed cert chain that Node rejects by default)
   const rejectUnauthorized = envFlag(
     'DB_SSL_REJECT_UNAUTHORIZED',
-    !looksLikeSupabaseConnection(databaseUrl)
+    false  // default false for Supabase compatibility
   );
 
   return { rejectUnauthorized };
@@ -35,16 +37,26 @@ function buildSslConfig() {
 
 const ssl = buildSslConfig();
 
-const pool = databaseUrl
-  ? new Pool({ connectionString: databaseUrl, ssl })
-  : new Pool({
+// When using a Supabase DATABASE_URL the connection string contains
+// sslmode=require which pg parses, but we must also pass ssl:{rejectUnauthorized:false}
+// explicitly to avoid "self-signed certificate in certificate chain" errors.
+const poolOptions = databaseUrl
+  ? {
+      connectionString: databaseUrl,
+      ssl: looksLikeSupabaseConnection(databaseUrl)
+        ? { rejectUnauthorized: false }
+        : ssl,
+    }
+  : {
       host: process.env.PGHOST || 'localhost',
       port: Number(process.env.PGPORT || 5432),
       database: process.env.PGDATABASE || 'postgres',
       user: process.env.PGUSER || 'postgres',
       password: process.env.PGPASSWORD || 'root',
       ssl,
-    });
+    };
+
+const pool = new Pool(poolOptions);
 
 export async function query(text, params) {
   const client = await pool.connect();
