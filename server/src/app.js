@@ -108,14 +108,18 @@ app.get('/', (req, res) => {
     </html>
   `);
 });
-app.get(`${apiBasePath}/health`, async (req, res) => {
+async function healthHandler(req, res) {
   try {
     await query("SELECT 1");
     res.json({ ok: true, uptime: process.uptime() });
   } catch (err) {
     res.status(500).json({ ok: false, error: "DB not reachable" });
   }
-});
+}
+// Primary health check (used by Render)
+app.get('/health', healthHandler);
+// Also available under the API base path
+app.get(`${apiBasePath}/health`, healthHandler);
 
 app.post(`${apiBasePath}/chat/docbot`, async (req, res) => {
   if (!docBotEnabled()) {
