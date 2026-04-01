@@ -51,3 +51,7 @@ types/ethers-contracts/factories/Lock.sol/
 
 server/node_modules
 code.md
+
+# Deployment tooling state (keep local only)
+.vercel/
+supabase/

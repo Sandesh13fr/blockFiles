@@ -2,6 +2,17 @@
 
 A modern, decentralized file storage application built with React, IPFS, Ethereum, and a local Hardhat dev chain. Store, share, and manage files securely with blockchain-verified ownership.
 
+## Branch Strategy
+
+- `main`: Local usage, testing, and showcase demos (local Hardhat/local services workflow).
+- `deployment`: Hosted web deployment only (Vercel/Render/Supabase web environment workflow).
+
+Recommended workflow:
+
+1. Do local feature work and testing on `main`.
+2. Only move web-deployment-ready changes into `deployment`.
+3. Keep deployment-specific env/routing/platform config changes on `deployment`.
+
 ## ✨ Features
 
 ### Core Features
