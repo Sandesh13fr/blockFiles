@@ -3,14 +3,7 @@ import { Pool } from 'pg';
 
 dotenv.config();
 
-// Strip sslmode from DATABASE_URL so our explicit ssl config object takes full control
-// (pg parses sslmode from the URL and can override the ssl:{rejectUnauthorized} option)
-const _rawDatabaseUrl = process.env.DATABASE_URL;
-const databaseUrl = _rawDatabaseUrl
-  ? _rawDatabaseUrl.replace(/[?&]sslmode=[^&]*/g, (m, offset, str) =>
-      m.startsWith('?') ? (str.includes('&') ? '?' : '') : ''
-    ).replace(/\?$/, '')
-  : _rawDatabaseUrl;
+const databaseUrl = process.env.DATABASE_URL;
 
 function envFlag(name, defaultValue = false) {
   const value = process.env[name];
@@ -44,26 +37,21 @@ function buildSslConfig() {
 
 const ssl = buildSslConfig();
 
-// When using a Supabase DATABASE_URL the connection string contains
-// sslmode=require which pg parses, but we must also pass ssl:{rejectUnauthorized:false}
-// explicitly to avoid "self-signed certificate in certificate chain" errors.
-const poolOptions = databaseUrl
-  ? {
+// Build pool config — for Supabase connections always use rejectUnauthorized:false
+// because the pooler uses a self-signed cert chain.
+const pool = databaseUrl
+  ? new Pool({
       connectionString: databaseUrl,
-      ssl: looksLikeSupabaseConnection(databaseUrl)
-        ? { rejectUnauthorized: false }
-        : ssl,
-    }
-  : {
+      ssl: { rejectUnauthorized: false },
+    })
+  : new Pool({
       host: process.env.PGHOST || 'localhost',
       port: Number(process.env.PGPORT || 5432),
       database: process.env.PGDATABASE || 'postgres',
       user: process.env.PGUSER || 'postgres',
       password: process.env.PGPASSWORD || 'root',
       ssl,
-    };
-
-const pool = new Pool(poolOptions);
+    });
 
 export async function query(text, params) {
   const client = await pool.connect();
