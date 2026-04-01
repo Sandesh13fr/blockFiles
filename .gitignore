@@ -51,3 +51,5 @@ types/ethers-contracts/factories/Lock.sol/
 
 server/node_modules
 code.md
+.vercel
+.env*.local

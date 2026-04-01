@@ -1,9 +1,10 @@
+const API_BASE = import.meta.env.VITE_API_BASE_PATH || '/api';
+
 export async function deleteFile(cid) {
   const res = await fetch(`${API_BASE}/files/${cid}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Delete failed');
   return res.json();
 }
-const API_BASE = import.meta.env.VITE_API_BASE_PATH || '/api';
 
 export async function health() {
   const res = await fetch(`${API_BASE}/health`);

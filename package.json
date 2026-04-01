@@ -53,6 +53,7 @@
     "globals": "^16.3.0",
     "hardhat": "^3.0.5",
     "mocha": "^11.7.2",
+    "supabase": "^2.84.5",
     "typescript": "~5.8.0",
     "viem": "^2.37.5",
     "vite": "^7.1.2"
