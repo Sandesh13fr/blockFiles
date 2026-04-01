@@ -3,7 +3,14 @@ import { Pool } from 'pg';
 
 dotenv.config();
 
-const databaseUrl = process.env.DATABASE_URL;
+// Strip sslmode from DATABASE_URL so our explicit ssl config object takes full control
+// (pg parses sslmode from the URL and can override the ssl:{rejectUnauthorized} option)
+const _rawDatabaseUrl = process.env.DATABASE_URL;
+const databaseUrl = _rawDatabaseUrl
+  ? _rawDatabaseUrl.replace(/[?&]sslmode=[^&]*/g, (m, offset, str) =>
+      m.startsWith('?') ? (str.includes('&') ? '?' : '') : ''
+    ).replace(/\?$/, '')
+  : _rawDatabaseUrl;
 
 function envFlag(name, defaultValue = false) {
   const value = process.env[name];
