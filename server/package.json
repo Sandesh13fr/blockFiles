@@ -14,10 +14,12 @@
     "ethers": "^6.8.0",
     "express": "^4.19.2",
     "ipfs-http-client": "^60.0.0",
+    "mammoth": "^1.8.0",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "pdf-parse": "^1.1.1",
-    "mammoth": "^1.8.0",
+    "pdf2json": "^4.0.2",
+    "pdfjs-dist": "^5.6.205",
     "pg": "^8.11.3"
   }
-} 
+}

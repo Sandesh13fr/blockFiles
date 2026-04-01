@@ -1,8 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
-import { ethers } from 'ethers'
 import useMetaMask from '../hooks/useMetaMask'
 import { getRegistryContract, CONTRACT_ADDRESS } from '../fileRegistry'
-import { listFiles, uploadFile, downloadByCid, ipfsGatewayUrl, health, deleteFile } from '../api'
+import { listFiles, uploadFile, ipfsGatewayUrl, health, deleteFile } from '../api'
 import ShareModal from '../components/ShareModal'
 import TransferOwnershipModal from '../components/TransferOwnershipModal'
 
@@ -134,6 +133,10 @@ export default function UploadPage() {
       if (!selected || selected.length === 0) return;
       setLoading(true);
       for (const file of selected) {
+        const provider = getProvider()
+        const feeValuePromise = contract.registerFee()
+        const feeDataPromise = provider.getFeeData()
+
         // 1) Upload to IPFS/backend
         const res = await uploadFile(file);
         if (!res?.cid) {
@@ -148,15 +151,14 @@ export default function UploadPage() {
           // Get required registration fee
           let feeValue
           try {
-            feeValue = await contract.registerFee()
+            feeValue = await feeValuePromise
           } catch (feeErr) {
             console.error('Failed to read registerFee()', feeErr)
             throw new Error('Unable to read register fee; verify the contract address and redeploy if needed.')
           }
           const gasEstimate = await contract.registerFile.estimateGas(res.cid, { value: feeValue })
           const gasLimit = (gasEstimate * 120n) / 100n // +20% buffer
-          const provider = getProvider()
-          const feeData = await provider.getFeeData()
+          const feeData = await feeDataPromise
           const overrides = { gasLimit }
           if (feeValue > 0n) overrides.value = feeValue
           if (feeData.gasPrice) {

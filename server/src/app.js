@@ -3,11 +3,13 @@ import cors from "cors";
 import dotenv from "dotenv";
 import morgan from "morgan";
 import multer from "multer";
-import { uploadFileToPinata, unpinFileFromPinata } from "./ipfs.js";
-import os from "os";
-import fs from "fs";
+import {
+  uploadBufferToPinata,
+  unpinFileFromPinata,
+  isCidPinnedByCurrentAccount,
+  waitForCidPinnedByCurrentAccount
+} from "./ipfs.js";
 import path from "path";
-import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 // import { create as createIpfsClient } from 'ipfs-http-client';
 import { ensureSchema, query } from "./db.js";
@@ -28,11 +30,27 @@ for (const envPath of envCandidates) {
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const apiBasePath = process.env.API_BASE_PATH || "/api";
+const pinataVisibilityFilter = (process.env.PINATA_VISIBILITY_FILTER || 'true').toLowerCase() !== 'false';
+const strictUploadPinVerify = (process.env.PINATA_STRICT_UPLOAD_VERIFY || 'false').toLowerCase() === 'true';
 // Registry filter modes:
 //  - "strict" (default): only return rows that are confirmed on-chain
 //  - "soft": try on-chain first, but if nothing resolves, return DB rows
 //  - "off": skip on-chain filtering entirely
 const registryFilterMode = (process.env.REGISTRY_FILTER_MODE || 'soft').toLowerCase();
+const registryOwnerCacheTtlMs = Number(process.env.REGISTRY_OWNER_CACHE_TTL_MS || 20_000);
+const registryOwnerCache = new Map();
+
+async function hasOnChainOwner(cid) {
+  const cached = registryOwnerCache.get(cid);
+  const now = Date.now();
+  if (cached && now - cached.ts < registryOwnerCacheTtlMs) {
+    return cached.hasOwner;
+  }
+  const owner = await registry.getOwner(cid);
+  const hasOwner = Boolean(owner && owner !== ethers.ZeroAddress);
+  registryOwnerCache.set(cid, { hasOwner, ts: now });
+  return hasOwner;
+}
 
 // On-chain registry (for filtering only)
 let registry = null;
@@ -155,7 +173,6 @@ app.post(
   `${apiBasePath}/upload`,
   upload.single("file"),
   async (req, res, next) => {
-    let tempPath = null;
     let cid = null;
     let dbSaved = false;
     try {
@@ -165,20 +182,10 @@ app.post(
 
       const filename = req.file.originalname;
       const size = req.file.size;
-      const safeFilename = path
-        .basename(filename || "upload.bin")
-        .replace(/[^a-zA-Z0-9._() -]/g, "_")
-        .slice(-80);
 
-      // Save buffer to temp file
-      tempPath = path.join(
-        os.tmpdir(),
-        `blockfiles_${Date.now()}_${process.pid}_${randomUUID()}_${safeFilename}`
-      );
-      await fs.promises.writeFile(tempPath, req.file.buffer);
-
-      // Upload to Pinata
-      const pinataUpload = await uploadFileToPinata(tempPath);
+      // Upload directly from memory to avoid temp-file disk round trips.
+      const safeFilename = path.basename(filename || "upload.bin").slice(-120);
+      const pinataUpload = await uploadBufferToPinata(req.file.buffer, safeFilename);
 
       // Pinata returns an object with ipfsHash (CID)
       cid =
@@ -189,6 +196,17 @@ app.post(
         pinataUpload.hash;
       if (!cid) {
         return res.status(500).json({ error: "Pinata upload failed", details: pinataUpload });
+      }
+
+      if (strictUploadPinVerify) {
+        const pinCheck = await waitForCidPinnedByCurrentAccount(cid, { retries: 2, delayMs: 400 });
+        if (!pinCheck.pinned) {
+          return res.status(502).json({
+            error: 'Pinata upload not visible in current account',
+            details: pinCheck.reason || 'Upload completed but CID was not found in current Pinata pin list',
+            cid
+          });
+        }
       }
 
       const insertResult = await query(
@@ -229,16 +247,6 @@ app.post(
     } catch (err) {
       next(err);
     } finally {
-      if (tempPath) {
-        try {
-          await fs.promises.unlink(tempPath);
-        } catch (cleanupErr) {
-          if (cleanupErr.code !== "ENOENT") {
-            console.warn("Temp upload cleanup failed:", cleanupErr.message);
-          }
-        }
-      }
-
       if (cid && !dbSaved) {
         // Best-effort compensation: avoid orphaning fresh pins when DB persist fails.
         try {
@@ -261,14 +269,26 @@ app.get(`${apiBasePath}/files`, async (req, res, next) => {
       "SELECT id, filename, cid, size, upload_date FROM files ORDER BY upload_date DESC"
     );
 
+    const filteredByPinata = pinataVisibilityFilter
+      ? (await Promise.all(rows.map(async fileRow => {
+          try {
+            const pinned = await isCidPinnedByCurrentAccount(fileRow.cid);
+            return pinned ? fileRow : null;
+          } catch (err) {
+            console.warn('Pinata ownership check failed for', fileRow.cid, err.message);
+            return null;
+          }
+        }))).filter(Boolean)
+      : rows;
+
     // Enforce on-chain registration: only return files that are registered in the contract
-    let filtered = rows;
+    let filtered = filteredByPinata;
     if (registry && registryFilterMode !== 'off') {
       const checked = await Promise.all(
-        rows.map(async (f) => {
+        filteredByPinata.map(async (f) => {
           try {
-            const owner = await registry.getOwner(f.cid);
-            return owner && owner !== ethers.ZeroAddress ? f : null;
+            const registered = await hasOnChainOwner(f.cid);
+            return registered ? f : null;
           } catch (err) {
             console.warn('Registry check failed for', f.cid, err.message);
             return null;
@@ -281,10 +301,10 @@ app.get(`${apiBasePath}/files`, async (req, res, next) => {
         filtered = onChainRows;
       } else {
         // Soft mode: if on-chain data is empty (e.g., after local chain reset), fall back to DB rows
-        const dropped = rows.length - onChainRows.length;
+        const dropped = filteredByPinata.length - onChainRows.length;
         if (dropped && !onChainRows.length) {
-          console.warn('Registry returned no owners; returning DB rows because REGISTRY_FILTER_MODE=soft');
-          filtered = rows;
+          console.warn('Registry returned no owners; returning Pinata-filtered rows because REGISTRY_FILTER_MODE=soft');
+          filtered = filteredByPinata;
         } else {
           filtered = onChainRows;
         }

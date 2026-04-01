@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { TextDecoder } from 'util'
 import pdf from 'pdf-parse'
+import PDFParser from 'pdf2json'
 import mammoth from 'mammoth'
 import { query } from './db.js'
 import { getIpfsClient } from './ipfs.js'
@@ -19,6 +20,7 @@ const MAX_FILE_BYTES = Number(process.env.DOCBOT_MAX_FILE_BYTES || 50 * 1024 * 1
 const MAX_CHUNKS_PER_FILE = Number(process.env.DOCBOT_MAX_CHUNKS_PER_FILE || 8)
 const CHUNK_SIZE = Number(process.env.DOCBOT_CHUNK_SIZE || 900)
 const CHUNK_OVERLAP = Number(process.env.DOCBOT_CHUNK_OVERLAP || 150)
+const INDEX_METADATA_FALLBACK = (process.env.DOCBOT_INDEX_METADATA_FALLBACK || 'true').toLowerCase() !== 'false'
 const INDEX_TTL = Number(process.env.DOCBOT_INDEX_TTL_MS || 5 * 60 * 1000)
 const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '')
 const OPENROUTER_SITE_URL = (process.env.OPENROUTER_SITE_URL || '').trim()
@@ -31,7 +33,25 @@ const hasOpenRouter = Boolean(process.env.OPENROUTER_API_KEY)
 const indexState = {
   chunks: [],
   lastIndexed: 0,
-  building: null
+  building: null,
+  lastBuildStats: {
+    filesSeen: 0,
+    filesIndexed: 0,
+    filesSkipped: 0,
+    chunksCreated: 0,
+    emptyTextFiles: 0,
+    emptyChunkFiles: 0,
+    metadataOnlyChunks: 0,
+    fetchFailures: 0,
+    embedFailures: 0,
+    skipped: []
+  }
+}
+
+function pushSkipped(stats, cid, reason) {
+  if (stats.skipped.length < 10) {
+    stats.skipped.push({ cid, reason })
+  }
 }
 
 function ensureOpenRouter() {
@@ -79,10 +99,90 @@ function sha1(text) {
 async function parsePdf(buffer) {
   try {
     const parsed = await pdf(buffer)
-    return parsed.text || ''
+    const primaryText = (parsed.text || '').trim()
+    if (primaryText) return primaryText
+
+    // Fallback for PDFs where pdf-parse returns no text but selectable text still exists.
+    const pdfjsText = await parsePdfWithPdfJs(buffer)
+    if (pdfjsText) return pdfjsText
+
+    const pdf2jsonText = await parsePdfWithPdf2Json(buffer)
+    return pdf2jsonText || ''
   } catch (err) {
     console.warn('Docbot PDF parse failed for buffer', err.message)
-    return ''
+    try {
+      const pdfjsText = await parsePdfWithPdfJs(buffer)
+      if (pdfjsText) return pdfjsText
+
+      const pdf2jsonText = await parsePdfWithPdf2Json(buffer)
+      return pdf2jsonText || ''
+    } catch (fallbackErr) {
+      console.warn('Docbot PDF fallback parse failed', fallbackErr.message)
+      return ''
+    }
+  }
+}
+
+async function parsePdfWithPdfJs(buffer) {
+  try {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      isEvalSupported: false,
+      useWorkerFetch: false,
+      disableFontFace: true
+    })
+    const doc = await loadingTask.promise
+    const textParts = []
+
+    for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
+      const page = await doc.getPage(pageNum)
+      const content = await page.getTextContent()
+      for (const item of content.items || []) {
+        if (typeof item?.str === 'string' && item.str.trim()) {
+          textParts.push(item.str)
+        }
+      }
+    }
+
+    const text = textParts.join(' ').replace(/\s+/g, ' ').trim()
+    return text
+  } catch (err) {
+    throw new Error(`pdfjs extraction failed: ${err.message}`)
+  }
+}
+
+async function parsePdfWithPdf2Json(buffer) {
+  try {
+    const text = await new Promise((resolve, reject) => {
+      const parser = new PDFParser(null, 1)
+      parser.on('pdfParser_dataError', err => reject(err?.parserError || err))
+      parser.on('pdfParser_dataReady', data => {
+        try {
+          const pages = Array.isArray(data?.Pages) ? data.Pages : []
+          const tokens = []
+          for (const page of pages) {
+            const texts = Array.isArray(page?.Texts) ? page.Texts : []
+            for (const t of texts) {
+              const runs = Array.isArray(t?.R) ? t.R : []
+              for (const r of runs) {
+                if (typeof r?.T === 'string' && r.T.length) {
+                  tokens.push(decodeURIComponent(r.T))
+                }
+              }
+            }
+          }
+          resolve(tokens.join(' '))
+        } catch (mapErr) {
+          reject(mapErr)
+        }
+      })
+      parser.parseBuffer(buffer)
+    })
+
+    return String(text || '').replace(/\s+/g, ' ').trim()
+  } catch (err) {
+    throw new Error(`pdf2json extraction failed: ${err.message}`)
   }
 }
 
@@ -238,6 +338,35 @@ function cosineSimilarity(a, b) {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
 
+function tokenize(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length >= 3)
+}
+
+function lexicalSimilarity(queryText, candidateText) {
+  const queryTokens = new Set(tokenize(queryText))
+  if (!queryTokens.size) return 0
+  const candidateTokens = new Set(tokenize(candidateText))
+  if (!candidateTokens.size) return 0
+  let overlap = 0
+  for (const token of queryTokens) {
+    if (candidateTokens.has(token)) overlap += 1
+  }
+  return overlap / queryTokens.size
+}
+
+async function buildEmbeddingIfPossible(text, stats) {
+  try {
+    return await embedText(text)
+  } catch (err) {
+    stats.embedFailures += 1
+    return null
+  }
+}
+
 async function buildDocIndex(force = false) {
   if (!hasOpenRouter) return []
   if (!force && indexState.chunks.length && Date.now() - indexState.lastIndexed < INDEX_TTL) {
@@ -248,40 +377,101 @@ async function buildDocIndex(force = false) {
   indexState.building = (async () => {
     const { rows } = await query('SELECT filename, cid FROM files ORDER BY upload_date DESC LIMIT $1', [MAX_FILES])
     const freshChunks = []
+    const stats = {
+      filesSeen: rows.length,
+      filesIndexed: 0,
+      filesSkipped: 0,
+      chunksCreated: 0,
+      emptyTextFiles: 0,
+      emptyChunkFiles: 0,
+      metadataOnlyChunks: 0,
+      fetchFailures: 0,
+      embedFailures: 0,
+      skipped: []
+    }
+
     for (const file of rows) {
+      const cid = file.cid
       try {
-        const text = await fetchPinataText(file.cid)
-        if (!text) continue
+        const text = await fetchPinataText(cid)
+        if (!text || !text.trim()) {
+          stats.emptyTextFiles += 1
+          if (INDEX_METADATA_FALLBACK) {
+            const metadataText = `Metadata-only index entry. Content extraction failed for this file. Filename: ${file.filename || cid}. CID: ${cid}.`
+            const embedding = await buildEmbeddingIfPossible(metadataText, stats)
+            freshChunks.push({
+              id: `${cid}:metadata`,
+              cid,
+              filename: file.filename || cid,
+              text: metadataText,
+              embedding,
+              metadataOnly: true
+            })
+            stats.filesIndexed += 1
+            stats.chunksCreated += 1
+            stats.metadataOnlyChunks += 1
+          } else {
+            stats.filesSkipped += 1
+            pushSkipped(stats, cid, 'No extractable text found (possibly scanned/image-only document)')
+          }
+          continue
+        }
+
         const pieces = chunkText(text)
+        if (!pieces.length) {
+          stats.filesSkipped += 1
+          stats.emptyChunkFiles += 1
+          pushSkipped(stats, cid, 'Text extracted but produced no chunks')
+          continue
+        }
+
+        let fileChunkCount = 0
         for (let i = 0; i < pieces.length; i++) {
           const chunkTextValue = pieces[i]
-          const id = `${file.cid}:${sha1(chunkTextValue)}:${i}`
-          const embedding = await embedText(chunkTextValue)
+          const id = `${cid}:${sha1(chunkTextValue)}:${i}`
+          const embedding = await buildEmbeddingIfPossible(chunkTextValue, stats)
           freshChunks.push({
             id,
-            cid: file.cid,
-            filename: file.filename || file.cid,
+            cid,
+            filename: file.filename || cid,
             text: chunkTextValue,
             embedding
           })
+          fileChunkCount += 1
+        }
+        if (fileChunkCount > 0) {
+          stats.filesIndexed += 1
+          stats.chunksCreated += fileChunkCount
         }
       } catch (err) {
-        console.warn('Docbot chunking skipped for', file.cid, err.message)
+        const message = err?.message || 'Unknown indexing error'
+        stats.filesSkipped += 1
+        stats.fetchFailures += 1
+        pushSkipped(stats, cid, message)
+        console.warn('Docbot chunking skipped for', cid, message)
       }
     }
     indexState.chunks = freshChunks
     indexState.lastIndexed = Date.now()
-    indexState.building = null
+    indexState.lastBuildStats = stats
     return freshChunks
   })()
 
-  return indexState.building
+  try {
+    return await indexState.building
+  } finally {
+    indexState.building = null
+  }
 }
 
 export async function refreshDocIndex() {
   if (!hasOpenRouter) return { ok: false, reason: 'OPENROUTER_API_KEY missing' }
   await buildDocIndex(true)
-  return { ok: true, chunks: indexState.chunks.length }
+  return {
+    ok: true,
+    chunks: indexState.chunks.length,
+    stats: indexState.lastBuildStats
+  }
 }
 
 export async function answerDocQuestion({ question, history = [] }) {
@@ -292,14 +482,33 @@ export async function answerDocQuestion({ question, history = [] }) {
   if (!prompt) throw new Error('Question is required')
   const chunks = await buildDocIndex(false)
   if (!chunks.length) {
+    const stats = indexState.lastBuildStats
+    const filesSeen = stats?.filesSeen || 0
+    const hasUploads = filesSeen > 0
+    const hint = hasUploads
+      ? 'Files are uploaded, but no readable text was extracted. This usually means scanned/image-only PDFs or unsupported formats.'
+      : 'No uploaded files were found for indexing.'
     return {
-      answer: 'No documents are indexed yet. Upload files to Pinata and try again.',
+      answer: `No documents are indexed yet. ${hint}`,
       sources: []
     }
   }
-  const queryEmbedding = await embedText(prompt)
+
+  let queryEmbedding = null
+  try {
+    queryEmbedding = await embedText(prompt)
+  } catch (err) {
+    queryEmbedding = null
+  }
+
   const scored = chunks
-    .map(chunk => ({ ...chunk, score: cosineSimilarity(queryEmbedding, chunk.embedding) }))
+    .map(chunk => {
+      const hasVectors = Array.isArray(queryEmbedding) && Array.isArray(chunk.embedding)
+      const score = hasVectors
+        ? cosineSimilarity(queryEmbedding, chunk.embedding)
+        : lexicalSimilarity(prompt, `${chunk.filename || ''} ${chunk.text || ''}`)
+      return { ...chunk, score }
+    })
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.min(5, chunks.length))
 
@@ -313,6 +522,7 @@ export async function answerDocQuestion({ question, history = [] }) {
 
   const instructions = `You are the blockFiles document assistant. Use the provided context chunks (linked to Pinata CIDs) to answer the latest user question.
 - Cite supporting chunks inline using their reference number like [#1].
+- Some chunks may be metadata-only fallbacks for files where content extraction failed. If only metadata is available, say so clearly and do not invent document contents.
 - If the answer cannot be found in the context, state that clearly instead of guessing.`
 
   const promptParts = []
@@ -321,27 +531,37 @@ export async function answerDocQuestion({ question, history = [] }) {
   promptParts.push(`Question: ${prompt}`)
 
   ensureOpenRouter()
-  const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: openRouterHeaders(),
-    body: JSON.stringify({
-      model: DEFAULT_CHAT_MODEL,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: instructions },
-        { role: 'user', content: promptParts.join('\n\n') }
-      ]
+  let answer = ''
+  try {
+    const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: openRouterHeaders(),
+      body: JSON.stringify({
+        model: DEFAULT_CHAT_MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: instructions },
+          { role: 'user', content: promptParts.join('\n\n') }
+        ]
+      })
     })
-  })
-  const body = await parseOpenRouterResponse(res, 'Chat completion request')
-  const rawAnswer = body?.choices?.[0]?.message?.content
-  const answer = typeof rawAnswer === 'string'
-    ? rawAnswer
-    : Array.isArray(rawAnswer)
-      ? rawAnswer.map(part => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
-      : ''
+    const body = await parseOpenRouterResponse(res, 'Chat completion request')
+    const rawAnswer = body?.choices?.[0]?.message?.content
+    answer = typeof rawAnswer === 'string'
+      ? rawAnswer
+      : Array.isArray(rawAnswer)
+        ? rawAnswer.map(part => (typeof part === 'string' ? part : part?.text || '')).join('').trim()
+        : ''
+  } catch (err) {
+    const modelError = err?.message || 'Model request failed'
+    const fileSummaries = scored
+      .map(chunk => `- ${chunk.filename || chunk.cid} (${chunk.cid})${chunk.metadataOnly ? ' [metadata-only]' : ''}`)
+      .join('\n')
+    answer = `Model response unavailable (${modelError}). I can still confirm indexed files:\n${fileSummaries || '- none'}`
+  }
+
   if (!answer) {
-    throw new Error('Chat completion request returned no answer text')
+    answer = 'Model returned no answer text, but files were indexed. Try rephrasing your question.'
   }
 
   return {

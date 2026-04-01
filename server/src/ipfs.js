@@ -35,6 +35,70 @@ const pinata = new PinataSDK({
   pinataGatewayKey: PINATA_GATEWAY_KEY
 });
 
+const pinCacheTtlMs = Number(process.env.PINATA_PIN_CACHE_TTL_MS || 45_000);
+const pinOwnershipCache = new Map();
+
+async function delay(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Checks whether a CID is pinned in the current Pinata account.
+ */
+export async function isCidPinnedByCurrentAccount(cid) {
+  if (!cid) return false;
+  const cached = pinOwnershipCache.get(cid);
+  const now = Date.now();
+  if (cached && now - cached.ts < pinCacheTtlMs) {
+    return cached.pinned;
+  }
+  try {
+    const resp = await axios.get('https://api.pinata.cloud/data/pinList', {
+      params: {
+        hashContains: cid,
+        status: 'pinned',
+        pageLimit: 1
+      },
+      headers: {
+        Authorization: `Bearer ${PINATA_JWT}`
+      }
+    });
+    const rows = Array.isArray(resp.data?.rows) ? resp.data.rows : [];
+    const pinned = rows.some(row => row?.ipfs_pin_hash === cid || row?.hash === cid);
+    pinOwnershipCache.set(cid, { pinned, ts: now });
+    return pinned;
+  } catch (err) {
+    const detail = err.response?.data?.error || err.message;
+    throw new Error(`Pinata pinList check failed: ${detail}`);
+  }
+}
+
+/**
+ * Waits briefly for Pinata pin list to reflect a newly uploaded CID.
+ */
+export async function waitForCidPinnedByCurrentAccount(cid, options = {}) {
+  const retries = Number(options.retries ?? 5);
+  const delayMs = Number(options.delayMs ?? 1200);
+  let lastError = null;
+
+  for (let i = 0; i < retries; i++) {
+    try {
+      const pinned = await isCidPinnedByCurrentAccount(cid);
+      if (pinned) return { pinned: true, attempts: i + 1 };
+    } catch (err) {
+      lastError = err;
+    }
+    if (i < retries - 1) {
+      await delay(delayMs);
+    }
+  }
+
+  if (lastError) {
+    return { pinned: false, attempts: retries, reason: lastError.message };
+  }
+  return { pinned: false, attempts: retries, reason: 'CID not visible in current Pinata account pin list yet' };
+}
+
 /**
  * Unpins a file from Pinata Cloud. Tries SDK helpers first, then REST fallback.
  */
@@ -77,6 +141,20 @@ export async function uploadFileToPinata(filePath) {
   try {
     const fileName = path.basename(filePath);
     const file = new File([await fs.promises.readFile(filePath)], fileName);
+    const result = await pinata.upload.public.file(file);
+    return result;
+  } catch (error) {
+    console.error('Pinata upload error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Uploads an in-memory file to Pinata Cloud.
+ */
+export async function uploadBufferToPinata(fileBuffer, fileName = 'upload.bin') {
+  try {
+    const file = new File([fileBuffer], path.basename(fileName));
     const result = await pinata.upload.public.file(file);
     return result;
   } catch (error) {
