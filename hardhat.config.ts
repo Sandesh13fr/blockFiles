@@ -1,7 +1,16 @@
 import type { HardhatUserConfig } from "hardhat/config";
 import hardhatToolboxMochaEthersPlugin from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
 import hardhatEthersPlugin from "@nomicfoundation/hardhat-ethers";
-import { configVariable } from "hardhat/config";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const sepoliaRpcUrl = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
+const rawSepoliaPrivateKey = process.env.SEPOLIA_PRIVATE_KEY?.trim();
+const sepoliaPrivateKey = rawSepoliaPrivateKey
+  ? (rawSepoliaPrivateKey.startsWith("0x") ? rawSepoliaPrivateKey : `0x${rawSepoliaPrivateKey}`)
+  : undefined;
+const sepoliaAccounts = sepoliaPrivateKey ? [sepoliaPrivateKey] : [];
 
 const config: HardhatUserConfig = {
   plugins: [hardhatToolboxMochaEthersPlugin, hardhatEthersPlugin],
@@ -26,8 +35,8 @@ const config: HardhatUserConfig = {
     },
     sepolia: {
       type: "http",
-      url: configVariable("SEPOLIA_RPC_URL"),
-      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
+      url: sepoliaRpcUrl,
+      accounts: sepoliaAccounts,
     },
   },
 };

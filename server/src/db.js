@@ -1,7 +1,12 @@
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
+import dns from 'dns';
 
 dotenv.config();
+
+// Force IPv4 DNS resolution globally so pg doesn't try IPv6 addresses
+// (Render Oregon cannot reach Supabase Tokyo over IPv6)
+dns.setDefaultResultOrder('ipv4first');
 
 const databaseUrl = process.env.DATABASE_URL;
 
