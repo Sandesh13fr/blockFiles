@@ -320,17 +320,29 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal Server Error" });
 });
 
-// Start
+// Start — DB errors are non-fatal so the server always binds its port
 (async function start() {
-  try {
-    await ensureSchema();
-    await initRegistry();
+  // Always start listening first so Render's port scan succeeds
+  await new Promise((resolve) => {
     app.listen(port, () => {
       console.log(`Server listening on http://localhost:${port}${apiBasePath}`);
+      resolve();
     });
+  });
+
+  // Then attempt DB schema setup (non-fatal)
+  try {
+    await ensureSchema();
+    console.log('Database schema ready');
   } catch (err) {
-    console.error("Failed to start server", err);
-    process.exit(1);
+    console.error('DB schema setup failed (will retry on first request):', err.message);
+  }
+
+  // Registry init is also non-fatal
+  try {
+    await initRegistry();
+  } catch (err) {
+    console.error('Registry init failed:', err.message);
   }
 })();
 
